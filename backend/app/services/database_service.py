@@ -5,7 +5,7 @@ from collections.abc import Iterator
 from sqlalchemy import Engine, create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.config.settings import Settings, get_settings
+from ..config.settings import Settings, get_settings
 
 
 class DatabaseService:

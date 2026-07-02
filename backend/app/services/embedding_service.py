@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from app.config.settings import Settings, get_settings
+from ..config.settings import Settings, get_settings
 
 
 class EmbeddingService:

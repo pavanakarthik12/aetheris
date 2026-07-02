@@ -1,12 +1,11 @@
 """Dependency providers for FastAPI endpoints and application services."""
 
+from __future__ import annotations
+
 from functools import lru_cache
 
-from app.config.settings import Settings, get_settings
-from app.services.chroma_service import ChromaService
-from app.services.database_service import DatabaseService
-from app.services.embedding_service import EmbeddingService
-from app.services.llm_service import LLMService
+from .config.settings import Settings, get_settings
+from .services.llm_service import LLMService
 
 
 def get_app_settings() -> Settings:
@@ -26,6 +25,8 @@ def get_llm_service() -> LLMService:
 def get_embedding_service() -> EmbeddingService:
     """Provide the shared embedding service boundary."""
 
+    from .services.embedding_service import EmbeddingService
+
     return EmbeddingService(get_settings())
 
 
@@ -33,11 +34,15 @@ def get_embedding_service() -> EmbeddingService:
 def get_chroma_service() -> ChromaService:
     """Provide the shared ChromaDB service boundary."""
 
+    from .services.chroma_service import ChromaService
+
     return ChromaService(get_settings())
 
 
 @lru_cache(maxsize=1)
 def get_database_service() -> DatabaseService:
     """Provide the shared SQLAlchemy database service."""
+
+    from .services.database_service import DatabaseService
 
     return DatabaseService(get_settings())
