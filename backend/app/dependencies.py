@@ -22,7 +22,7 @@ def get_llm_service() -> LLMService:
 
 
 @lru_cache(maxsize=1)
-def get_embedding_service() -> EmbeddingService:
+def get_embedding_service() -> "EmbeddingService":
     """Provide the shared embedding service boundary."""
 
     from .services.embedding_service import EmbeddingService
@@ -31,7 +31,7 @@ def get_embedding_service() -> EmbeddingService:
 
 
 @lru_cache(maxsize=1)
-def get_chroma_service() -> ChromaService:
+def get_chroma_service() -> "ChromaService":
     """Provide the shared ChromaDB service boundary."""
 
     from .services.chroma_service import ChromaService
@@ -40,7 +40,19 @@ def get_chroma_service() -> ChromaService:
 
 
 @lru_cache(maxsize=1)
-def get_database_service() -> DatabaseService:
+def get_memory_service() -> "MemoryService":
+    """Provide the shared MemoryService instance for dependency injection."""
+
+    from .services.memory_service import MemoryService
+
+    return MemoryService(
+        embedding_service=get_embedding_service(),
+        chroma_service=get_chroma_service(),
+    )
+
+
+@lru_cache(maxsize=1)
+def get_database_service() -> "DatabaseService":
     """Provide the shared SQLAlchemy database service."""
 
     from .services.database_service import DatabaseService

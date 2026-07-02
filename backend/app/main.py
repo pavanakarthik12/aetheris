@@ -11,6 +11,7 @@ from .middleware.error_handlers import register_exception_handlers
 from .middleware.request_id import RequestIdMiddleware
 from .routers.chat import router as chat_router
 from .routers.health import router as health_router
+from .routers.memory import router as memory_router
 from .utils.logging import configure_logging
 
 
@@ -44,6 +45,7 @@ def create_app() -> FastAPI:
     register_exception_handlers(application)
     application.include_router(health_router, prefix=settings.api_v1_prefix)
     application.include_router(chat_router)
+    application.include_router(memory_router)
 
     return application
 
