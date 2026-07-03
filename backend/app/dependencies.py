@@ -52,6 +52,15 @@ def get_memory_service() -> "MemoryService":
 
 
 @lru_cache(maxsize=1)
+def get_context_builder_service() -> "ContextBuilderService":
+    """Provide the shared ContextBuilderService instance for dependency injection."""
+
+    from .services.context_builder import ContextBuilderService
+
+    return ContextBuilderService()
+
+
+@lru_cache(maxsize=1)
 def get_database_service() -> "DatabaseService":
     """Provide the shared SQLAlchemy database service."""
 

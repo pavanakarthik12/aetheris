@@ -60,7 +60,14 @@ class EmbeddingService:
         try:
             model = self._get_model()
             vector = model.encode(text, normalize_embeddings=True)
-            return vector.tolist()
+            result = vector.tolist()
+            logger.info(
+                "Embedding generated | model=%s | dim=%d | text_preview=%.60r",
+                self._model_name,
+                len(result),
+                text,
+            )
+            return result
         except EmbeddingServiceError:
             raise
         except Exception as exc:

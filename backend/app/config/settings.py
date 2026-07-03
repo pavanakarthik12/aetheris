@@ -11,6 +11,9 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parents[3]
 ENV_PATH = BASE_DIR / ".env"
 
+# Absolute default paths — never depend on the CWD at runtime.
+_DEFAULT_CHROMA_PATH = str(BASE_DIR / "database" / "chroma")
+
 
 def _load_env_file() -> dict[str, str]:
     values: dict[str, str] = {}
@@ -26,6 +29,14 @@ def _load_env_file() -> dict[str, str]:
         key, value = line.split("=", 1)
         values[key.strip()] = value.strip().strip('"').strip("'")
 
+    # If CHROMA_DB_PATH is a relative path in the .env file, resolve it
+    # against BASE_DIR so the database always lands in the same place
+    # regardless of where the server process is launched from.
+    if "CHROMA_DB_PATH" in values:
+        p = Path(values["CHROMA_DB_PATH"])
+        if not p.is_absolute():
+            values["CHROMA_DB_PATH"] = str(BASE_DIR / p)
+
     return values
 
 
@@ -39,7 +50,7 @@ class Settings:
     qwen_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     database_url: str = ""
     secret_key: str = ""
-    chroma_db_path: str = "./database/chroma"
+    chroma_db_path: str = str(Path(__file__).resolve().parents[3] / "database" / "chroma")
     embedding_model: str = "BAAI/bge-base-en-v1.5"
     llm_provider: str = "qwen"
     llm_model: str = "qwen-3.7-plus"
@@ -62,7 +73,7 @@ def get_settings() -> Settings:
         ),
         database_url=os.getenv("DATABASE_URL", env_file_values.get("DATABASE_URL", "")),
         secret_key=os.getenv("SECRET_KEY", env_file_values.get("SECRET_KEY", "")),
-        chroma_db_path=os.getenv("CHROMA_DB_PATH", env_file_values.get("CHROMA_DB_PATH", "./database/chroma")),
+        chroma_db_path=os.getenv("CHROMA_DB_PATH", env_file_values.get("CHROMA_DB_PATH", _DEFAULT_CHROMA_PATH)),
         embedding_model=os.getenv(
             "EMBEDDING_MODEL",
             env_file_values.get("EMBEDDING_MODEL", "BAAI/bge-base-en-v1.5"),

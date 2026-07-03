@@ -135,9 +135,10 @@ class ChromaService:
         distances = results.get("distances", [[]])[0]
 
         for mem_id, doc, meta, dist in zip(ids, documents, metadatas, distances):
-            # ChromaDB returns L2 distance; convert to a 0-1 similarity score.
-            # For normalised embeddings, distance ∈ [0, 2], so score = 1 - dist/2.
-            score = round(1.0 - dist / 2.0, 6)
+            # ChromaDB cosine space returns distance in [0, 2].
+            # cosine_similarity = 1 - cosine_distance
+            # dist=0 → identical (score=1.0), dist=2 → opposite (score=-1.0)
+            score = round(1.0 - dist, 6)
             records.append(
                 {
                     "id": mem_id,
@@ -262,7 +263,7 @@ class ChromaService:
             try:
                 self._collection = client.get_or_create_collection(
                     name=COLLECTION_NAME,
-                    metadata={"hnsw:space": "l2"},
+                    metadata={"hnsw:space": "cosine"},
                 )
                 logger.info(
                     "ChromaDB collection ready | name=%s | count=%d",

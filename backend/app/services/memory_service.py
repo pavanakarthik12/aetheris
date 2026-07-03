@@ -107,7 +107,7 @@ class MemoryService:
             logger.exception("ChromaDB write failed during save_memory | id=%s", memory_id)
             raise MemoryServiceError(str(exc), status_code=exc.status_code) from exc
 
-        logger.info("Memory saved successfully | id=%s", memory_id)
+        logger.info("Memory saved successfully | id=%s | text=%.80r", memory_id, memory_text)
         return {
             "memory_id": memory_id,
             "status": "saved",
@@ -167,7 +167,12 @@ class MemoryService:
             logger.exception("ChromaDB query failed during search_memory")
             raise MemoryServiceError(str(exc), status_code=exc.status_code) from exc
 
-        logger.info("Memory search returned %d result(s)", len(results))
+        logger.info("Memory search returned %d result(s) | query=%.60r", len(results), query)
+        for i, r in enumerate(results):
+            logger.info(
+                "  result[%d] | score=%.4f | text=%.80r",
+                i, r.get("score", 0), r.get("document", ""),
+            )
         return results
 
     # ------------------------------------------------------------------

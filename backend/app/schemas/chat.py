@@ -1,4 +1,4 @@
-"""Chat request and response schemas for the Phase 1 API."""
+"""Chat request and response schemas for the Aetheris chat API."""
 
 from pydantic import BaseModel, Field
 
@@ -12,4 +12,11 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     """Single-message chat response payload."""
 
-    response: str
+    response: str = Field(description="The assistant's reply.")
+    memory_count: int = Field(
+        default=0,
+        description=(
+            "Number of memories injected into the prompt for this response. "
+            "Zero means the reply was generated without memory context."
+        ),
+    )
