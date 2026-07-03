@@ -26,11 +26,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from ..dependencies import (
     get_context_builder_service,
     get_llm_service,
+    get_memory_evaluator_service,
     get_memory_service,
 )
 from ..schemas.chat import ChatRequest, ChatResponse
 from ..services.context_builder import ContextBuilderService
 from ..services.llm_service import LLMService, LLMServiceError
+from ..services.memory_evaluator import MemoryEvaluation, MemoryEvaluatorService, MemoryEvaluatorServiceError
 from ..services.memory_service import MemoryService
 
 router = APIRouter(tags=["chat"])
@@ -45,6 +47,7 @@ async def chat(
     request: ChatRequest,
     llm_service: LLMService = Depends(get_llm_service),
     memory_service: MemoryService = Depends(get_memory_service),
+    memory_evaluator_service: MemoryEvaluatorService = Depends(get_memory_evaluator_service),
     context_builder: ContextBuilderService = Depends(get_context_builder_service),
 ) -> ChatResponse:
     """Retrieve relevant memories, inject them into the prompt, call Qwen.
@@ -88,20 +91,57 @@ async def chat(
         )
 
     # ------------------------------------------------------------------
-    # Step 2 — Save the current message to memory AFTER searching.
-    # It will be available for retrieval on the NEXT turn.
+    # Step 2 — Evaluate the current message before attempting to store it.
+    # If the evaluator rejects the message, we skip persistence entirely.
     # ------------------------------------------------------------------
+    evaluation: MemoryEvaluation | None = None
     try:
-        save_result = memory_service.save_memory(
-            memory_text=request.message,
-            metadata={"source": "chat"},
+        evaluation = await memory_evaluator_service.evaluate_memory(request.message)
+        logger.info(
+            "Memory evaluation complete | store=%s | category=%s | importance=%.2f | reason=%s",
+            evaluation.store,
+            evaluation.category,
+            evaluation.importance,
+            evaluation.reason,
         )
-        logger.info("User message saved as memory | id=%s", save_result["memory_id"])
-    except Exception as save_exc:
+    except MemoryEvaluatorServiceError as eval_exc:
         logger.warning(
-            "Failed to save user message as memory — continuing | reason=%s",
-            save_exc,
+            "Memory evaluation failed — continuing without storage | reason=%s",
+            eval_exc,
             exc_info=True,
+        )
+
+    if evaluation is not None and evaluation.store:
+        try:
+            save_result = memory_service.save_memory(
+                memory_text=request.message,
+                metadata={
+                    "source": "chat",
+                    "category": evaluation.category,
+                    "importance": evaluation.importance,
+                    "reason": evaluation.reason,
+                },
+            )
+            logger.info("User message saved as memory | id=%s", save_result["memory_id"])
+            logger.info(
+                "Memory storage success | store=%s | category=%s | importance=%.2f",
+                evaluation.store,
+                evaluation.category,
+                evaluation.importance,
+            )
+        except Exception as save_exc:
+            logger.warning(
+                "Failed to save user message as memory — continuing | reason=%s",
+                save_exc,
+                exc_info=True,
+            )
+    elif evaluation is not None:
+        logger.info(
+            "Memory storage skipped | store=%s | category=%s | importance=%.2f | reason=%s",
+            evaluation.store,
+            evaluation.category,
+            evaluation.importance,
+            evaluation.reason,
         )
 
     # ------------------------------------------------------------------

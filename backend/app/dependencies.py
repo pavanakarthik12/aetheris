@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+from fastapi import Depends
+
 from .config.settings import Settings, get_settings
 from .services.llm_service import LLMService
 
@@ -58,6 +60,16 @@ def get_context_builder_service() -> "ContextBuilderService":
     from .services.context_builder import ContextBuilderService
 
     return ContextBuilderService()
+
+
+def get_memory_evaluator_service(
+    llm_service: LLMService = Depends(get_llm_service),
+) -> "MemoryEvaluatorService":
+    """Provide the memory evaluator wired to the shared LLM service."""
+
+    from .services.memory_evaluator import MemoryEvaluatorService
+
+    return MemoryEvaluatorService(llm_service=llm_service)
 
 
 @lru_cache(maxsize=1)
