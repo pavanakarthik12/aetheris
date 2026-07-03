@@ -76,6 +76,16 @@ class ChromaService:
                 documents=[document],
                 metadatas=[metadata],
             )
+            stored = collection.get(ids=[memory_id], include=["documents", "metadatas"])
+            if not stored.get("ids"):
+                raise ChromaServiceError(
+                    f"ChromaDB did not confirm insertion for memory '{memory_id}'.",
+                    status_code=500,
+                )
+
+            logger.info("Memory Saved")
+            logger.info("Memory ID | %s", memory_id)
+            logger.info("Memory Text | %s", document)
             logger.info("Memory stored | id=%s | doc_length=%d", memory_id, len(document))
         except Exception as exc:
             # ChromaDB raises a plain Exception (or a subclass) for duplicate IDs
@@ -95,28 +105,23 @@ class ChromaService:
         query_embedding: list[float],
         top_k: int = 5,
     ) -> list[dict[str, Any]]:
-        """Return the *top_k* most semantically similar memories.
-
-        Args:
-            query_embedding: Dense vector for the query string.
-            top_k:           Maximum number of results to return.
-
-        Returns:
-            List of dicts, each containing:
-            - ``id``       — memory UUID
-            - ``document`` — stored text
-            - ``score``    — cosine similarity (higher is more similar)
-            - ``metadata`` — associated metadata dict
-
-        Raises:
-            ChromaServiceError: If the query fails.
-        """
+        """Return the *top_k* most semantically similar memories."""
         collection = self._get_collection()
-        count = self._collection_count()
-        if count == 0:
+        logger.info("Query | top_k=%d | dim=%d", top_k, len(query_embedding))
+
+        # Always ask ChromaDB for the live count — never use a cached value.
+        # A stale count of 0 would cause an early return even when data exists.
+        try:
+            live_count = collection.count()
+        except Exception:
+            live_count = 0
+
+        if live_count == 0:
+            logger.info("search_memory | collection is empty, returning []")
             return []
 
-        effective_k = min(top_k, count)
+        effective_k = min(top_k, live_count)
+        logger.info("search_memory | live_count=%d | effective_k=%d", live_count, effective_k)
 
         try:
             results = collection.query(
@@ -135,9 +140,6 @@ class ChromaService:
         distances = results.get("distances", [[]])[0]
 
         for mem_id, doc, meta, dist in zip(ids, documents, metadatas, distances):
-            # ChromaDB cosine space returns distance in [0, 2].
-            # cosine_similarity = 1 - cosine_distance
-            # dist=0 → identical (score=1.0), dist=2 → opposite (score=-1.0)
             score = round(1.0 - dist, 6)
             records.append(
                 {
@@ -148,6 +150,14 @@ class ChromaService:
                 }
             )
 
+        logger.info("Retrieved Memories | count=%d", len(records))
+        for record in records:
+            logger.info(
+                "Similarity Score | id=%s | score=%.6f | text=%s",
+                record["id"],
+                record["score"],
+                record["document"],
+            )
         logger.info("Memory search complete | top_k=%d | results=%d", top_k, len(records))
         return records
 
@@ -277,10 +287,8 @@ class ChromaService:
         return self._collection
 
     def _collection_count(self) -> int:
-        """Return the number of records currently in the collection."""
+        """Return the live number of records in the collection."""
         try:
             return self._get_collection().count()
-        except ChromaServiceError:
-            raise
         except Exception:
             return 0

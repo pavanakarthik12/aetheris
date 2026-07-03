@@ -130,6 +130,8 @@ class LLMService:
         else:
             user_turn = user_message.strip()
 
+        final_prompt = f"{system_prompt.strip()}\n\n{user_turn}".strip()
+
         messages.append({"role": "user", "content": user_turn})
 
         self._logger.info(
@@ -137,6 +139,7 @@ class LLMService:
             bool(memory_context.strip()),
             len(user_message),
         )
+        self._logger.info("Final prompt sent to the LLM:\n%s", final_prompt)
 
         return await self._chat_completion(messages=messages)
 

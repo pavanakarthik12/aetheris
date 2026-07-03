@@ -3,10 +3,9 @@
 Request flow:
     POST /api/chat
         │
-        ├─ 1. Save user message to ChromaDB (auto-memory accumulation)
+        ├─ 1. Search ChromaDB for memories from PREVIOUS turns
         │
-        ├─ 2. Search ChromaDB for relevant memories
-        │       (failures are caught and swallowed — memory is optional)
+        ├─ 2. Save the current message to ChromaDB (available next turn)
         │
         ├─ 3. Build memory context block via ContextBuilderService
         │
@@ -60,25 +59,9 @@ async def chat(
     total_started = perf_counter()
 
     # ------------------------------------------------------------------
-    # Step 1 — Save the incoming message as a memory BEFORE searching.
-    # This ensures every user message accumulates in ChromaDB so future
-    # turns can retrieve it.  Failures are non-fatal.
-    # ------------------------------------------------------------------
-    try:
-        save_result = memory_service.save_memory(
-            memory_text=request.message,
-            metadata={"source": "chat"},
-        )
-        logger.info("User message saved as memory | id=%s", save_result["memory_id"])
-    except Exception as save_exc:
-        logger.warning(
-            "Failed to save user message as memory — continuing | reason=%s",
-            save_exc,
-            exc_info=True,
-        )
-
-    # ------------------------------------------------------------------
-    # Step 2 — Retrieve relevant memories for this message
+    # Step 1 — Search existing memories BEFORE saving the current message.
+    # This ensures only previously stored memories surface as context —
+    # not the message we're about to process.
     # ------------------------------------------------------------------
     memories: list[dict] = []
     retrieval_ms: float = 0.0
@@ -101,6 +84,23 @@ async def chat(
             "Memory retrieval failed — continuing without context | reason=%s | duration_ms=%.2f",
             mem_exc,
             retrieval_ms,
+            exc_info=True,
+        )
+
+    # ------------------------------------------------------------------
+    # Step 2 — Save the current message to memory AFTER searching.
+    # It will be available for retrieval on the NEXT turn.
+    # ------------------------------------------------------------------
+    try:
+        save_result = memory_service.save_memory(
+            memory_text=request.message,
+            metadata={"source": "chat"},
+        )
+        logger.info("User message saved as memory | id=%s", save_result["memory_id"])
+    except Exception as save_exc:
+        logger.warning(
+            "Failed to save user message as memory — continuing | reason=%s",
+            save_exc,
             exc_info=True,
         )
 

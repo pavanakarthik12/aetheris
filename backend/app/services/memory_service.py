@@ -89,6 +89,13 @@ class MemoryService:
         # 1. Generate embedding
         try:
             embedding = self._embeddings.embed_text(memory_text)
+            logger.info(
+                "Embedding generated for memory | id=%s | dim=%d | text=%s",
+                memory_id,
+                len(embedding),
+                memory_text,
+            )
+            logger.info("Memory metadata | id=%s | metadata=%s", memory_id, resolved_meta)
         except EmbeddingServiceError as exc:
             logger.exception("Embedding failed during save_memory | id=%s", memory_id)
             raise MemoryServiceError(
@@ -147,6 +154,7 @@ class MemoryService:
             top_k = 100
 
         logger.info("Searching memories | query_length=%d | top_k=%d", len(query), top_k)
+        logger.info("Search query | %s", query)
 
         # 1. Embed the query
         try:
