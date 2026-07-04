@@ -93,17 +93,15 @@ async def evolve(
             if not target_id:
                 raise HTTPException(status_code=500, detail="MERGE decision missing target_id.")
 
-            existing = evolution._chroma_service.get_memory_by_id(target_id)
-            existing_text = existing["document"] if existing else ""
+            existing_text = await evolution.get_memory_document(target_id) or ""
 
             merged_text = f"{existing_text}\n{request.memory_text}"
-            result = await evolution.merge_memory(
-                target_id=target_id,
-                source_id=target_id,
-                merged_text=merged_text,
-                merged_metadata=request.metadata,
+            result = await evolution.update_memory(
+                memory_id=target_id,
+                new_text=merged_text,
+                new_metadata=request.metadata,
             )
-            memory_id = result["target_id"]
+            memory_id = result["memory_id"]
             version = result["version"]
 
         else:

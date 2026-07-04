@@ -162,18 +162,16 @@ async def chat(
             elif action == "MERGE":
                 target_id = decision.get("target_id")
                 if target_id:
-                    existing_mem = memory_evolution_service._chroma_service.get_memory_by_id(target_id)
-                    existing_text = existing_mem["document"] if existing_mem else ""
+                    existing_text = await memory_evolution_service.get_memory_document(target_id) or ""
                     merged_text = f"{existing_text}\n{request.message}"
-                    result = await memory_evolution_service.merge_memory(
-                        target_id=target_id,
-                        source_id=target_id,
-                        merged_text=merged_text,
-                        merged_metadata=base_metadata,
+                    result = await memory_evolution_service.update_memory(
+                        memory_id=target_id,
+                        new_text=merged_text,
+                        new_metadata=base_metadata,
                     )
                     logger.info(
                         "Memory MERGED | target=%s | version=%d | category=%s",
-                        result["target_id"], result["version"], evaluation.category,
+                        result["memory_id"], result["version"], evaluation.category,
                     )
 
             else:

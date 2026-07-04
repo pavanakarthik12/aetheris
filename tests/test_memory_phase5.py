@@ -18,6 +18,7 @@ if str(ROOT_DIR) not in sys.path:
 
 from backend.app.dependencies import get_llm_service, get_memory_evolution_service, get_memory_service
 from backend.app.main import app
+from backend.app.services.chroma_service import ChromaServiceError
 from backend.app.services.memory_evolution_service import MemoryEvolutionService
 from backend.app.services.memory_service import MemoryService
 
@@ -98,7 +99,7 @@ class FakeChromaService:
         metadata: dict[str, Any],
     ) -> None:
         if memory_id not in self._records:
-            raise RuntimeError(f"Memory '{memory_id}' not found.")
+            raise ChromaServiceError(f"Memory '{memory_id}' not found.", status_code=404)
         self._records[memory_id] = {
             "id": memory_id,
             "embedding": embedding,

@@ -48,6 +48,13 @@ class MemoryEvolutionService:
     # Public API — required methods
     # ------------------------------------------------------------------
 
+    async def get_memory_document(self, memory_id: str) -> str | None:
+        """Return the document text for a memory, or None if not found."""
+        existing = self._chroma_service.get_memory_by_id(memory_id)
+        if existing is None:
+            return None
+        return existing.get("document")
+
     async def detect_related_memories(
         self,
         memory_text: str,
@@ -97,7 +104,7 @@ class MemoryEvolutionService:
             )
 
             conflicts.append({
-                "memory_id": mem["id"],
+                "memory_id": mem.get("id", ""),
                 "relationship": relationship,
                 "score": score,
                 "explanation": explanation,
@@ -178,7 +185,7 @@ class MemoryEvolutionService:
                 return {
                     "action": "MERGE",
                     "target_id": conflict["memory_id"],
-                    "version": 0,
+                    "version": 1,
                     "explanation": conflict["explanation"],
                 }
 
@@ -212,7 +219,6 @@ class MemoryEvolutionService:
         resolved["updated_at"] = datetime.now(tz=timezone.utc).isoformat()
 
         result = await self._memory_service.save_memory(memory_text, metadata=resolved)
-        result["version"] = 1
         return result
 
     async def update_memory(
@@ -272,7 +278,7 @@ class MemoryEvolutionService:
         new_meta["history"] = json.dumps(old_history)
 
         # Preserve fields from old metadata unless explicitly overridden
-        for key in ("created_at", "source", "category", "importance", "tags"):
+        for key in ("created_at", "source", "category", "importance", "tags", "reason"):
             if key in old_meta and key not in new_meta:
                 new_meta.setdefault(key, old_meta[key])
 
@@ -527,6 +533,6 @@ class MemoryEvolutionService:
     ) -> dict[str, Any] | None:
         """Look up a memory dict by ID from a list."""
         for mem in memories:
-            if mem["id"] == memory_id:
+            if mem.get("id") == memory_id:
                 return mem
         return None
