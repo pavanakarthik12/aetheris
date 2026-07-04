@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 
 import { ChatHeader } from "../../components/chat/ChatHeader";
 import { ChatWindow } from "../../components/chat/ChatWindow";
@@ -19,10 +19,6 @@ export default function ChatPage() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  // Keep a stable ref so the submit handler always sees the latest messages
-  const messagesRef = useRef(messages);
-  messagesRef.current = messages;
 
   const appendMessage = useCallback((message: ChatMessage) => {
     setMessages((prev) => [...prev, message]);

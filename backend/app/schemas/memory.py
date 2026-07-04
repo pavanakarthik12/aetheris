@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # ---------------------------------------------------------------------------
@@ -19,8 +19,7 @@ class MemoryMetadata(BaseModel):
     tags: str = Field(default="", description="Comma-separated topic tags.")
     importance: float = Field(default=0.5, ge=0.0, le=1.0, description="Importance score between 0 and 1.")
 
-    class Config:
-        extra = "allow"  # accept arbitrary additional keys
+    model_config = ConfigDict(extra="allow")  # accept arbitrary additional keys
 
 
 # ---------------------------------------------------------------------------

@@ -51,7 +51,7 @@ class ContextBuilderService:
         Args:
             memories:    Raw results from ``MemoryService.search_memory()``.
                          Each dict must contain ``document`` and ``score``.
-            min_score:   Cosine similarity floor (0–1).  Defaults to 0.30.
+            min_score:   Cosine similarity floor (0–1).  Defaults to 0.20.
             max_memories: Maximum bullet points to include.  Defaults to 5.
 
         Returns:

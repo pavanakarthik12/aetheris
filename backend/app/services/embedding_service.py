@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from functools import partial
 
 from ..config.settings import Settings, get_settings
 
@@ -42,7 +44,7 @@ class EmbeddingService:
         """Return the configured embedding model identifier."""
         return self._model_name
 
-    def embed_text(self, text: str) -> list[float]:
+    async def embed_text(self, text: str) -> list[float]:
         """Generate a single embedding vector for *text*.
 
         Args:
@@ -59,7 +61,9 @@ class EmbeddingService:
 
         try:
             model = self._get_model()
-            vector = model.encode(text, normalize_embeddings=True)
+            loop = asyncio.get_running_loop()
+            fn = partial(model.encode, text, normalize_embeddings=True)
+            vector = await loop.run_in_executor(None, fn)
             result = vector.tolist()
             logger.info(
                 "Embedding generated | model=%s | dim=%d | text_preview=%.60r",
@@ -76,7 +80,7 @@ class EmbeddingService:
                 f"Embedding generation failed: {exc}"
             ) from exc
 
-    def embed_documents(self, documents: list[str]) -> list[list[float]]:
+    async def embed_documents(self, documents: list[str]) -> list[list[float]]:
         """Generate embedding vectors for a batch of documents.
 
         Args:
@@ -93,7 +97,9 @@ class EmbeddingService:
 
         try:
             model = self._get_model()
-            vectors = model.encode(documents, normalize_embeddings=True, batch_size=32)
+            loop = asyncio.get_running_loop()
+            fn = partial(model.encode, documents, normalize_embeddings=True, batch_size=32)
+            vectors = await loop.run_in_executor(None, fn)
             return [v.tolist() for v in vectors]
         except EmbeddingServiceError:
             raise

@@ -1,8 +1,12 @@
 """Global exception handlers for the FastAPI application."""
 
+import logging
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+
+logger = logging.getLogger(__name__)
 
 
 def register_exception_handlers(application: FastAPI) -> None:
@@ -40,6 +44,7 @@ def register_exception_handlers(application: FastAPI) -> None:
 
     @application.exception_handler(Exception)
     async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+        logger.exception("Unhandled exception | url=%s", request.url)
         return JSONResponse(
             status_code=500,
             content={

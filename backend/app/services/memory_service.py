@@ -52,7 +52,7 @@ class MemoryService:
     # save_memory
     # ------------------------------------------------------------------
 
-    def save_memory(
+    async def save_memory(
         self,
         memory_text: str,
         metadata: dict[str, Any] | None = None,
@@ -88,7 +88,7 @@ class MemoryService:
 
         # 1. Generate embedding
         try:
-            embedding = self._embeddings.embed_text(memory_text)
+            embedding = await self._embeddings.embed_text(memory_text)
             logger.info(
                 "Embedding generated for memory | id=%s | dim=%d | text=%s",
                 memory_id,
@@ -125,7 +125,7 @@ class MemoryService:
     # search_memory
     # ------------------------------------------------------------------
 
-    def search_memory(
+    async def search_memory(
         self,
         query: str,
         top_k: int = 5,
@@ -158,7 +158,7 @@ class MemoryService:
 
         # 1. Embed the query
         try:
-            query_embedding = self._embeddings.embed_text(query)
+            query_embedding = await self._embeddings.embed_text(query)
         except EmbeddingServiceError as exc:
             logger.exception("Embedding failed during search_memory")
             raise MemoryServiceError(

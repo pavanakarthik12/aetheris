@@ -71,7 +71,7 @@ async def chat(
 
     retrieval_started = perf_counter()
     try:
-        memories = memory_service.search_memory(
+        memories = await memory_service.search_memory(
             query=request.message,
             top_k=_MEMORY_TOP_K,
         )
@@ -113,7 +113,7 @@ async def chat(
 
     if evaluation is not None and evaluation.store:
         try:
-            save_result = memory_service.save_memory(
+            save_result = await memory_service.save_memory(
                 memory_text=request.message,
                 metadata={
                     "source": "chat",

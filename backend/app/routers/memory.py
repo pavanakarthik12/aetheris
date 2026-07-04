@@ -56,7 +56,7 @@ async def save_memory(
             meta = request.metadata.dict(exclude_none=True)
 
     try:
-        result = memory_service.save_memory(
+        result = await memory_service.save_memory(
             memory_text=request.memory_text,
             metadata=meta or None,
         )
@@ -93,7 +93,7 @@ async def search_memory(
     )
 
     try:
-        raw_results = memory_service.search_memory(
+        raw_results = await memory_service.search_memory(
             query=request.query,
             top_k=request.top_k,
         )
