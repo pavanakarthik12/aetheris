@@ -219,6 +219,47 @@ class ChromaService:
         logger.info("Memory list retrieved | total=%d", len(records))
         return records
 
+    def update_memory(
+        self,
+        memory_id: str,
+        embedding: list[float],
+        document: str,
+        metadata: dict[str, Any],
+    ) -> None:
+        """Replace an existing memory record in-place.
+
+        Uses ChromaDB's native ``update`` which requires the ID to already
+        exist.  Embeddings, document, and metadata are all replaced atomically.
+
+        Args:
+            memory_id: UUID of the memory to update.
+            embedding:  New dense vector.
+            document:   New text content.
+            metadata:   New metadata dict.
+
+        Raises:
+            ChromaServiceError: If the ID does not exist or the update fails.
+        """
+        collection = self._get_collection()
+        try:
+            existing = collection.get(ids=[memory_id])
+            if not existing["ids"]:
+                raise ChromaServiceError(
+                    f"Memory '{memory_id}' not found.", status_code=404,
+                )
+            collection.update(
+                ids=[memory_id],
+                embeddings=[embedding],
+                documents=[document],
+                metadatas=[metadata],
+            )
+            logger.info("Memory updated | id=%s | doc_length=%d", memory_id, len(document))
+        except ChromaServiceError:
+            raise
+        except Exception as exc:
+            logger.exception("ChromaDB update failed | id=%s", memory_id)
+            raise ChromaServiceError(f"Failed to update memory: {exc}") from exc
+
     def get_memory_by_id(self, memory_id: str) -> dict[str, Any] | None:
         """Fetch a single memory by its UUID, or return None if not found.
 

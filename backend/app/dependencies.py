@@ -73,6 +73,19 @@ def get_memory_evaluator_service(
 
 
 @lru_cache(maxsize=1)
+def get_memory_evolution_service() -> "MemoryEvolutionService":
+    """Provide the shared MemoryEvolutionService instance."""
+
+    from .services.memory_evolution_service import MemoryEvolutionService
+
+    return MemoryEvolutionService(
+        memory_service=get_memory_service(),
+        chroma_service=get_chroma_service(),
+        embedding_service=get_embedding_service(),
+    )
+
+
+@lru_cache(maxsize=1)
 def get_database_service() -> "DatabaseService":
     """Provide the shared SQLAlchemy database service."""
 

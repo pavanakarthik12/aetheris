@@ -23,7 +23,7 @@ from backend.app.services.memory_service import MemoryService
 class FakeEmbeddingService:
     """Deterministic embedding stub for semantic-memory tests."""
 
-    def embed_text(self, text: str) -> list[float]:
+    async def embed_text(self, text: str) -> list[float]:
         normalized = text.lower()
 
         if any(token in normalized for token in ("cat", "feline", "kitten")):

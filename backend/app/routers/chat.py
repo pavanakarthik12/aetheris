@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 from time import perf_counter
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -27,12 +28,14 @@ from ..dependencies import (
     get_context_builder_service,
     get_llm_service,
     get_memory_evaluator_service,
+    get_memory_evolution_service,
     get_memory_service,
 )
 from ..schemas.chat import ChatRequest, ChatResponse
 from ..services.context_builder import ContextBuilderService
 from ..services.llm_service import LLMService, LLMServiceError
 from ..services.memory_evaluator import MemoryEvaluation, MemoryEvaluatorService, MemoryEvaluatorServiceError
+from ..services.memory_evolution_service import MemoryEvolutionService, MemoryEvolutionServiceError
 from ..services.memory_service import MemoryService
 
 router = APIRouter(tags=["chat"])
@@ -48,6 +51,7 @@ async def chat(
     llm_service: LLMService = Depends(get_llm_service),
     memory_service: MemoryService = Depends(get_memory_service),
     memory_evaluator_service: MemoryEvaluatorService = Depends(get_memory_evaluator_service),
+    memory_evolution_service: MemoryEvolutionService = Depends(get_memory_evolution_service),
     context_builder: ContextBuilderService = Depends(get_context_builder_service),
 ) -> ChatResponse:
     """Retrieve relevant memories, inject them into the prompt, call Qwen.
@@ -112,22 +116,77 @@ async def chat(
         )
 
     if evaluation is not None and evaluation.store:
+        base_metadata: dict[str, Any] = {
+            "source": "chat",
+            "category": evaluation.category,
+            "importance": evaluation.importance,
+            "reason": evaluation.reason,
+        }
+
         try:
-            save_result = await memory_service.save_memory(
+            decision = await memory_evolution_service.decide_evolution(
                 memory_text=request.message,
-                metadata={
-                    "source": "chat",
+                existing_evaluation={
+                    "store": evaluation.store,
                     "category": evaluation.category,
                     "importance": evaluation.importance,
                     "reason": evaluation.reason,
                 },
             )
-            logger.info("User message saved as memory | id=%s", save_result["memory_id"])
-            logger.info(
-                "Memory storage success | store=%s | category=%s | importance=%.2f",
-                evaluation.store,
-                evaluation.category,
-                evaluation.importance,
+
+            action = decision["action"]
+
+            if action == "CREATE":
+                result = await memory_evolution_service.create_memory(
+                    memory_text=request.message,
+                    metadata=base_metadata,
+                )
+                logger.info(
+                    "Memory CREATED | id=%s | category=%s | importance=%.2f",
+                    result["memory_id"], evaluation.category, evaluation.importance,
+                )
+
+            elif action == "UPDATE":
+                target_id = decision.get("target_id")
+                if target_id:
+                    result = await memory_evolution_service.update_memory(
+                        memory_id=target_id,
+                        new_text=request.message,
+                        new_metadata=base_metadata,
+                    )
+                    logger.info(
+                        "Memory UPDATED | id=%s | version=%d | category=%s",
+                        result["memory_id"], result["version"], evaluation.category,
+                    )
+
+            elif action == "MERGE":
+                target_id = decision.get("target_id")
+                if target_id:
+                    existing_mem = memory_evolution_service._chroma_service.get_memory_by_id(target_id)
+                    existing_text = existing_mem["document"] if existing_mem else ""
+                    merged_text = f"{existing_text}\n{request.message}"
+                    result = await memory_evolution_service.merge_memory(
+                        target_id=target_id,
+                        source_id=target_id,
+                        merged_text=merged_text,
+                        merged_metadata=base_metadata,
+                    )
+                    logger.info(
+                        "Memory MERGED | target=%s | version=%d | category=%s",
+                        result["target_id"], result["version"], evaluation.category,
+                    )
+
+            else:
+                logger.info(
+                    "Memory evolution skipped | action=%s | reason=%s",
+                    action, decision.get("explanation", ""),
+                )
+
+        except MemoryEvolutionServiceError as evo_exc:
+            logger.warning(
+                "Memory evolution failed — continuing | reason=%s",
+                evo_exc,
+                exc_info=True,
             )
         except Exception as save_exc:
             logger.warning(
@@ -135,6 +194,7 @@ async def chat(
                 save_exc,
                 exc_info=True,
             )
+
     elif evaluation is not None:
         logger.info(
             "Memory storage skipped | store=%s | category=%s | importance=%.2f | reason=%s",

@@ -62,7 +62,8 @@ class ContextBuilderService:
             logger.debug("build_memory_context | no memories provided")
             return ""
 
-        filtered = self._filter(memories, min_score)
+        filtered = self._remove_archived(memories)
+        filtered = self._filter(filtered, min_score)
         deduplicated = self._deduplicate(filtered)
         capped = deduplicated[:max_memories]
 
@@ -135,6 +136,19 @@ class ContextBuilderService:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _remove_archived(
+        memories: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Exclude memories whose metadata marks them as archived."""
+        result: list[dict[str, Any]] = []
+        for m in memories:
+            meta = m.get("metadata", {})
+            if meta.get("status") == "archived":
+                continue
+            result.append(m)
+        return result
 
     @staticmethod
     def _filter(

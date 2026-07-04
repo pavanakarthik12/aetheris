@@ -1,0 +1,451 @@
+# Aetheris – Phase 6: Memory Evolution (Update, Merge & Archive)
+
+You are a Senior AI Systems Architect.
+
+We are building **Aetheris**, a modular cognitive AI architecture.
+
+This is **ONLY Phase 6**.
+
+## Strict Scope
+
+Implement **Memory Evolution**.
+
+Do NOT implement:
+
+* Personality
+* Emotion
+* Reflection
+* Planner
+* Knowledge Graph
+* Tool Calling
+* Multi-Agent Systems
+* Autonomous Tasks
+* Conversation History
+* Memory Compression
+* Memory Summarization
+
+Only extend the existing Memory System.
+
+---
+
+# Objective
+
+Aetheris should no longer blindly append memories.
+
+Before storing a new memory, it must determine whether it should:
+
+1. Create a new memory
+2. Update an existing memory
+3. Merge with an existing memory
+4. Archive an outdated memory
+
+---
+
+# Architecture
+
+Every new memory follows this pipeline:
+
+User Message
+
+↓
+
+Memory Evaluator
+
+↓
+
+Embedding
+
+↓
+
+Semantic Search (Top 5)
+
+↓
+
+Memory Evolution Engine
+
+↓
+
+Decision
+
+↓
+
+Create / Update / Merge / Archive
+
+↓
+
+Persist Changes
+
+---
+
+# Create a New Service
+
+Create:
+
+backend/app/services/memory_evolution_service.py
+
+This service is responsible for all memory evolution decisions.
+
+---
+
+# Required Public Methods
+
+Implement:
+
+* detect_related_memories()
+* detect_conflicts()
+* create_memory()
+* update_memory()
+* merge_memory()
+* archive_memory()
+
+Keep each method independent.
+
+---
+
+# Conflict Detection
+
+Compare the incoming memory with retrieved memories.
+
+Determine if the new memory:
+
+* reinforces an existing fact
+* updates an existing fact
+* contradicts an existing fact
+* is unrelated
+
+---
+
+# Decision Types
+
+The Memory Evolution Engine must return ONLY one of:
+
+CREATE
+
+UPDATE
+
+MERGE
+
+ARCHIVE
+
+---
+
+# Examples
+
+Example 1
+
+Existing
+
+User's favorite language is Java.
+
+Incoming
+
+I now prefer Rust.
+
+Decision
+
+UPDATE
+
+Result
+
+Current preference = Rust
+
+Previous value = Java
+
+Status = Historical
+
+---
+
+Example 2
+
+Existing
+
+User is building Aetheris.
+
+Incoming
+
+Aetheris is my AI cognitive architecture.
+
+Decision
+
+MERGE
+
+Result
+
+Single enriched memory.
+
+---
+
+Example 3
+
+Incoming
+
+Hello
+
+Decision
+
+No storage
+
+Handled by the existing Memory Evaluator.
+
+---
+
+Example 4
+
+Existing
+
+Goal:
+Learn Java.
+
+Incoming
+
+I completed my Java course.
+
+Decision
+
+UPDATE
+
+Goal Status = Completed
+
+---
+
+# Metadata
+
+Every memory must contain:
+
+memory_id
+
+text
+
+category
+
+importance
+
+created_at
+
+updated_at
+
+status
+
+version
+
+history
+
+tags
+
+source
+
+---
+
+# Versioning
+
+Never permanently overwrite a memory.
+
+Every update must:
+
+Increment version.
+
+Store previous value inside history.
+
+Example
+
+Version 1
+
+Favorite language = Java
+
+↓
+
+Version 2
+
+Favorite language = Rust
+
+History
+
+Version 1 stored.
+
+---
+
+# Archive Rules
+
+Archive memories that become obsolete.
+
+Examples
+
+Temporary travel plans
+
+Old preferences replaced by new ones
+
+Completed temporary tasks
+
+Archived memories must NOT appear in normal retrieval.
+
+They remain accessible for historical queries.
+
+---
+
+# ChromaDB
+
+If a memory is updated or merged:
+
+Update both:
+
+* vector representation
+* metadata
+
+Never leave stale embeddings.
+
+---
+
+# API Endpoints
+
+Implement:
+
+POST /api/memory/evolve
+
+POST /api/memory/update
+
+POST /api/memory/merge
+
+POST /api/memory/archive
+
+GET /api/memory/history/{memory_id}
+
+These endpoints are primarily for testing and debugging.
+
+---
+
+# Logging
+
+Log:
+
+Memory Retrieved
+
+Conflict Detected
+
+Decision
+
+Version Updated
+
+Memory Archived
+
+Merge Completed
+
+Errors
+
+Never log API keys.
+
+---
+
+# Error Handling
+
+If evolution fails:
+
+Do NOT corrupt existing memories.
+
+Leave the original memory unchanged.
+
+Return an informative error.
+
+---
+
+# Testing Scenarios
+
+Scenario 1
+
+Input
+
+My favorite language is Java.
+
+Later
+
+I now prefer Rust.
+
+Expected
+
+One active memory
+
+Java moved to history
+
+Rust becomes current
+
+---
+
+Scenario 2
+
+Input
+
+I'm building Aetheris.
+
+Later
+
+Aetheris is my AI cognitive architecture.
+
+Expected
+
+One merged memory
+
+No duplicates
+
+---
+
+Scenario 3
+
+Input
+
+Goal:
+Become an AI Engineer.
+
+Later
+
+I got my AI Engineer job.
+
+Expected
+
+Goal updated
+
+Status = Completed
+
+Version incremented
+
+---
+
+Scenario 4
+
+Input
+
+I'm traveling to Delhi today.
+
+Three months later
+
+Expected
+
+Archived
+
+Excluded from normal retrieval
+
+---
+
+# Code Quality
+
+Use:
+
+* SOLID principles
+* Dependency Injection
+* Type Hints
+* Pydantic Models
+* Clean Architecture
+* Service Separation
+* Reusable Components
+
+No duplicated logic.
+
+---
+
+# Deliverables
+
+1. Integrate the Memory Evolution Engine into the existing memory pipeline without breaking previous phases.
+2. Explain where evolution occurs relative to evaluation, embedding generation, and storage.
+3. Demonstrate all four decision paths (CREATE, UPDATE, MERGE, ARCHIVE).
+4. Ensure all existing retrieval functionality continues to work.
+5. Preserve backward compatibility with Phase 5.
+
+This phase must transform Aetheris from a static memory store into a dynamic memory system that evolves over time while preserving historical context.
