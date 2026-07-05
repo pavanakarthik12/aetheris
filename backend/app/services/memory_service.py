@@ -129,14 +129,17 @@ class MemoryService:
         self,
         query: str,
         top_k: int = 5,
+        include_archived: bool = False,
     ) -> list[dict[str, Any]]:
         """Semantically search stored memories for *query*.
 
         No LLM is invoked.  Results are ranked by cosine similarity.
+        Archived memories are excluded by default.
 
         Args:
             query: Natural-language query string.
             top_k: Maximum number of results to return (1–100).
+            include_archived: If *True*, archived memories are also returned.
 
         Returns:
             List of dicts ordered by descending similarity, each with:
@@ -174,6 +177,10 @@ class MemoryService:
         except ChromaServiceError as exc:
             logger.exception("ChromaDB query failed during search_memory")
             raise MemoryServiceError(str(exc), status_code=exc.status_code) from exc
+
+        # 3. Filter out archived unless explicitly requested
+        if not include_archived:
+            results = _filter_active(results)
 
         logger.info("Memory search returned %d result(s) | query=%.60r", len(results), query)
         for i, r in enumerate(results):
@@ -217,8 +224,16 @@ class MemoryService:
     # list_memories
     # ------------------------------------------------------------------
 
-    def list_memories(self) -> list[dict[str, Any]]:
-        """Return every stored memory record (useful for debugging).
+    def list_memories(
+        self,
+        include_archived: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Return stored memory records.
+
+        Archived memories are excluded by default.
+
+        Args:
+            include_archived: If *True*, archived memories are also returned.
 
         Returns:
             List of dicts, each with ``id``, ``document``, ``metadata``.
@@ -234,13 +249,16 @@ class MemoryService:
             logger.exception("ChromaDB list failed")
             raise MemoryServiceError(str(exc), status_code=exc.status_code) from exc
 
+        if not include_archived:
+            memories = _filter_active(memories)
+
         logger.info("Listed %d memory record(s)", len(memories))
         return memories
-
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
 
 def _build_metadata(
     caller_meta: dict[str, Any] | None,
@@ -257,7 +275,29 @@ def _build_metadata(
         "tags": "",
         "importance": 0.5,
         "memory_strength": 0.60,
+        "status": "active",
+        "version": 1,
     }
+
+
+def _filter_active(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return only records whose status is not ``archived``.
+
+    Records without a ``status`` metadata field are treated as active
+    for backward compatibility.
+    """
+    filtered: list[dict[str, Any]] = []
+    for r in records:
+        if r is None:
+            continue
+        meta = r.get("metadata")
+        if meta is None:
+            r = dict(r)
+            r["metadata"] = {}
+            filtered.append(r)
+        elif meta.get("status") != "archived":
+            filtered.append(r)
+    return filtered
 
     if caller_meta:
         for key, value in caller_meta.items():

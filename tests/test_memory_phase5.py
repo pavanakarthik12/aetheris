@@ -117,6 +117,29 @@ class FakeChromaService:
             for record in self._records.values()
         ]
 
+    def get_memories_by_metadata(
+        self,
+        where: dict[str, Any],
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        results = []
+        for mem_id, rec in self._records.items():
+            if rec is None:
+                continue
+            meta = rec.get("metadata")
+            if meta is None:
+                continue
+            matches = all(meta.get(k) == v for k, v in where.items())
+            if matches:
+                results.append({
+                    "id": rec["id"],
+                    "document": rec["document"],
+                    "metadata": dict(meta),
+                })
+        if limit is not None:
+            results = results[:limit]
+        return results
+
 
 def _cosine_similarity(left: list[float], right: list[float]) -> float:
     numerator = sum(a * b for a, b in zip(left, right))

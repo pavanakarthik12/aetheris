@@ -1,4 +1,4 @@
-"""Phase 7 Reflection Engine tests."""
+"""Phase 7 Reflection Engine tests — analysis only (no memory mutations)."""
 
 from __future__ import annotations
 
@@ -16,11 +16,16 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from backend.app.schemas.reflection import ReflectionAction, ReflectionOutput
+from backend.app.schemas.reflection import (
+    AssistantQuality,
+    ReflectionAction,
+    ReflectionOutput,
+    ReflectionStatistics,
+)
 from backend.app.services.chroma_service import ChromaServiceError
-from backend.app.services.embedding_service import EmbeddingServiceError
 from backend.app.services.reflection_service import (
     INITIAL_STRENGTH,
+    MIN_CONFIDENCE_FOR_ACTION,
     STRENGTH_INCREMENT,
     ReflectionService,
     ReflectionServiceError,
@@ -116,6 +121,29 @@ class FakeChromaService:
             for record in self._records.values()
         ]
 
+    def get_memories_by_metadata(
+        self,
+        where: dict[str, Any],
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        results = []
+        for mem_id, rec in self._records.items():
+            if rec is None:
+                continue
+            meta = rec.get("metadata")
+            if meta is None:
+                continue
+            matches = all(meta.get(k) == v for k, v in where.items())
+            if matches:
+                results.append({
+                    "id": rec["id"],
+                    "document": rec["document"],
+                    "metadata": dict(meta),
+                })
+        if limit is not None:
+            results = results[:limit]
+        return results
+
 
 def _cosine_similarity(left: list[float], right: list[float]) -> float:
     numerator = sum(a * b for a, b in zip(left, right))
@@ -134,7 +162,7 @@ class FakeLLMService:
 
         user_line = self._extract_user_message(prompt)
 
-        # Scenario 1: Repeated preference confirmation → STRENGTHEN_MEMORY
+        # Scenario 1: Repeated preference confirmation -> STRENGTHEN_MEMORY
         if "still prefer Java" in user_line or "still enjoy Java" in user_line:
             return json.dumps({
                 "new_memory": False,
@@ -148,7 +176,7 @@ class FakeLLMService:
                 "actions": ["STRENGTHEN_MEMORY"],
             })
 
-        # Scenario 2: User corrects the assistant
+        # Scenario 2: User corrects the assistant — analysis only, no mutation
         if "No, I said" in user_line or "I said Java" in user_line:
             return json.dumps({
                 "new_memory": False,
@@ -159,26 +187,27 @@ class FakeLLMService:
                 "confidence": 0.88,
                 "future_behavior_change": True,
                 "reflection_summary": "Assistant misremembered user's language preference.",
-                "actions": ["UPDATE_MEMORY"],
+                "actions": ["NO_ACTION"],
             })
 
-        # Scenario 3: New achievement/progress → UPDATE_MEMORY
+        # Scenario 3: New achievement/progress — analysis only, no mutation
         if "finished my Kubernetes" in user_line or "completed Kubernetes" in user_line:
             return json.dumps({
                 "new_memory": False,
-                "update_memory": True,
+                "update_memory": False,
                 "memory_strengthened": False,
                 "assistant_mistake": False,
                 "user_corrected_ai": False,
                 "confidence": 0.95,
                 "future_behavior_change": False,
                 "reflection_summary": "User completed Kubernetes certification.",
-                "actions": ["UPDATE_MEMORY"],
+                "actions": ["NO_ACTION"],
             })
 
-        # Scenario 4: Simple greeting → NO_ACTION
-        greeting_tokens = ("hello", "hi", "hey", "greetings")
-        if any(token in user_line.lower() for token in greeting_tokens):
+        # Scenario 4: Simple greeting -> NO_ACTION
+        greeting_tokens = {"hello", "hi", "hey", "greetings"}
+        user_words = set(user_line.lower().split())
+        if user_words & greeting_tokens:
             return json.dumps({
                 "new_memory": False,
                 "update_memory": False,
@@ -191,8 +220,40 @@ class FakeLLMService:
                 "actions": ["NO_ACTION"],
             })
 
-        # Default: NO_ACTION
-        return json.dumps({
+        # Scenario 5: Contradiction detection (analysis only, no strength change)
+        if "actually i hate" in user_line.lower():
+            return self._build_response({
+                "new_memory": True,
+                "update_memory": False,
+                "memory_strengthened": False,
+                "assistant_mistake": False,
+                "user_corrected_ai": False,
+                "confidence": 0.75,
+                "future_behavior_change": True,
+                "reflection_summary": "User expressed a contradictory preference.",
+                "actions": ["NO_ACTION"],
+                "action": "NO_ACTION",
+                "consistency": False,
+                "reasoning": "User contradicted previous preference.",
+            })
+
+        # Scenario 6: Low confidence / ambiguous
+        if "i'm not sure" in user_line.lower() or "maybe" in user_line.lower():
+            return self._build_response({
+                "new_memory": False,
+                "update_memory": False,
+                "memory_strengthened": False,
+                "assistant_mistake": False,
+                "user_corrected_ai": False,
+                "confidence": 0.25,
+                "future_behavior_change": False,
+                "reflection_summary": "Ambiguous input, confidence too low to act.",
+                "actions": ["NO_ACTION"],
+                "action": "NO_ACTION",
+            })
+
+        # Default: NO_ACTION with enhanced fields
+        return self._build_response({
             "new_memory": False,
             "update_memory": False,
             "memory_strengthened": False,
@@ -202,6 +263,7 @@ class FakeLLMService:
             "future_behavior_change": False,
             "reflection_summary": "No significant changes detected.",
             "actions": ["NO_ACTION"],
+            "action": "NO_ACTION",
         })
 
     async def generate_with_context(
@@ -221,6 +283,26 @@ class FakeLLMService:
                 return tail.split("\n\nAssistant Response:", 1)[0].strip()
             return tail.strip()
         return prompt.strip()
+
+    @staticmethod
+    def _build_response(base: dict) -> str:
+        enhanced = {
+            "assistant_quality": {
+                "correctness": 0.95,
+                "completeness": 0.90,
+                "relevance": 0.95,
+                "clarity": 0.95,
+                "confidence": 0.90,
+                "hallucination_risk": 0.05,
+            },
+            "user_preferences_detected": [],
+            "reasoning": "",
+            "requires_manual_review": False,
+            "memory_strength_delta": 0.0,
+            "consistency": True,
+        }
+        enhanced.update(base)
+        return json.dumps(enhanced)
 
     async def aclose(self) -> None:
         return None
@@ -292,9 +374,7 @@ class ReflectionPhase7Tests(unittest.TestCase):
 
     def _seed_memory(self, text: str, strength: float = 0.60) -> str:
         mem_id = str(uuid.uuid4())
-        embedding = [
-            0.8, 0.1, 0.1
-        ]  # deterministic for Java/Kubernetes-related text
+        embedding = [0.8, 0.1, 0.1]
         self.chroma_service.add_memory(
             memory_id=mem_id,
             embedding=embedding,
@@ -310,10 +390,9 @@ class ReflectionPhase7Tests(unittest.TestCase):
         return mem_id
 
     # ------------------------------------------------------------------
-    # Scenario 1: Repeated preference confirmation → STRENGTHEN_MEMORY
+    # Scenario 1: Repeated preference confirmation -> STRENGTHEN_MEMORY
     # ------------------------------------------------------------------
     def test_scenario1_strengthen_memory(self) -> None:
-        """Repeated preference confirmation should strengthen memory."""
         mem_id = self._seed_memory("My favorite language is Java.")
 
         record = self._run_reflection(
@@ -335,10 +414,9 @@ class ReflectionPhase7Tests(unittest.TestCase):
         )
 
     # ------------------------------------------------------------------
-    # Scenario 2: User corrects the assistant
+    # Scenario 2: User corrects the assistant (analysis only)
     # ------------------------------------------------------------------
     def test_scenario2_user_corrects_assistant(self) -> None:
-        """Assistant mistake detection when user corrects."""
         record = self._run_reflection(
             user_message="No, I said Java.",
             assistant_response="Oh, you said Python? Let me correct that.",
@@ -346,34 +424,28 @@ class ReflectionPhase7Tests(unittest.TestCase):
 
         self.assertTrue(record.reflection.assistant_mistake)
         self.assertTrue(record.reflection.user_corrected_ai)
+        self.assertTrue(record.reflection.future_behavior_change)
         actions = [a.value for a in record.reflection.actions]
-        self.assertIn("UPDATE_MEMORY", actions)
+        self.assertIn("NO_ACTION", actions)
 
     # ------------------------------------------------------------------
-    # Scenario 3: New achievement → UPDATE_MEMORY
+    # Scenario 3: New achievement (analysis only, no mutation)
     # ------------------------------------------------------------------
-    def test_scenario3_update_memory(self) -> None:
-        """New achievement information should trigger update and update document text."""
-        mem_id = self._seed_memory("I am learning Kubernetes.")
-
+    def test_scenario3_achievement_analysis(self) -> None:
         record = self._run_reflection(
             user_message="I finished my Kubernetes certification.",
             assistant_response="Congratulations! That's a huge achievement.",
         )
 
-        self.assertTrue(record.reflection.update_memory)
+        self.assertFalse(record.reflection.assistant_mistake)
         actions = [a.value for a in record.reflection.actions]
-        self.assertIn("UPDATE_MEMORY", actions)
-
-        updated = self.chroma_service.get_memory_by_id(mem_id)
-        assert updated is not None
-        self.assertIn("finished my Kubernetes certification", updated["document"])
+        self.assertIn("NO_ACTION", actions)
+        self.assertIn("Kubernetes", record.reflection.reflection_summary)
 
     # ------------------------------------------------------------------
-    # Scenario 4: Simple greeting → NO_ACTION
+    # Scenario 4: Simple greeting -> NO_ACTION
     # ------------------------------------------------------------------
     def test_scenario4_greeting_no_action(self) -> None:
-        """Simple greetings should result in NO_ACTION."""
         record = self._run_reflection(
             user_message="Hello",
             assistant_response="Hi there! How can I help you today?",
@@ -388,10 +460,43 @@ class ReflectionPhase7Tests(unittest.TestCase):
         self.assertEqual(actions, ["NO_ACTION"])
 
     # ------------------------------------------------------------------
+    # Scenario 5: Contradiction detection (analysis only)
+    # ------------------------------------------------------------------
+    def test_scenario5_contradiction_analysis(self) -> None:
+        mem_id = self._seed_memory("I love Java programming.", strength=0.80)
+
+        record = self._run_reflection(
+            user_message="Actually I hate Java, I prefer Python.",
+            assistant_response="I understand, let me update that.",
+        )
+
+        self.assertFalse(record.reflection.consistency)
+        # Verify reflection did NOT weaken the memory (removed from engine)
+        updated = self.chroma_service.get_memory_by_id(mem_id)
+        assert updated is not None
+        self.assertAlmostEqual(
+            updated["metadata"]["memory_strength"],
+            0.80,
+            places=2,
+        )
+
+    # ------------------------------------------------------------------
+    # Scenario 6: Low confidence threshold
+    # ------------------------------------------------------------------
+    def test_scenario6_low_confidence_defers_action(self) -> None:
+        record = self._run_reflection(
+            user_message="I'm not sure about this.",
+            assistant_response="Let me help clarify.",
+        )
+
+        actions = [a.value for a in record.reflection.actions]
+        self.assertEqual(actions, ["NO_ACTION"])
+        self.assertLess(record.reflection.confidence, MIN_CONFIDENCE_FOR_ACTION)
+
+    # ------------------------------------------------------------------
     # Reflection record is persisted as a file
     # ------------------------------------------------------------------
     def test_reflection_persisted_to_disk(self) -> None:
-        """Reflection records should be saved as JSON files."""
         record = self._run_reflection(
             user_message="Hello",
             assistant_response="Hi!",
@@ -407,7 +512,6 @@ class ReflectionPhase7Tests(unittest.TestCase):
     # List and get reflection records
     # ------------------------------------------------------------------
     def test_list_and_get_reflections(self) -> None:
-        """List and get reflection endpoints should work."""
         self._run_reflection(
             user_message="Hello",
             assistant_response="Hi!",
@@ -429,7 +533,6 @@ class ReflectionPhase7Tests(unittest.TestCase):
     # Reflection failure is non-fatal
     # ------------------------------------------------------------------
     def test_reflection_error_handling(self) -> None:
-        """Reflection failure should not raise, just log."""
         broken_llm = BrokenLLMService()
         service = ReflectionService(
             llm_service=broken_llm,
@@ -450,14 +553,12 @@ class ReflectionPhase7Tests(unittest.TestCase):
     # JSON parsing handles extra text around the JSON output
     # ------------------------------------------------------------------
     def test_parse_reflection_handles_extra_text(self) -> None:
-        """LLM output with extra text before/after JSON should parse correctly."""
         raw = 'Here is my analysis:\n```json\n{"new_memory": true, "update_memory": false, "memory_strengthened": false, "assistant_mistake": false, "user_corrected_ai": false, "confidence": 0.9, "future_behavior_change": false, "reflection_summary": "test", "actions": ["CREATE_MEMORY"]}\n```\n---'
         result = self.reflection_service._parse_reflection(raw)
         self.assertTrue(result.new_memory)
         self.assertEqual(result.actions, [ReflectionAction.CREATE_MEMORY])
 
     def test_parse_reflection_handles_plain_json(self) -> None:
-        """Raw JSON without markdown should parse correctly."""
         raw = '{"new_memory": false, "update_memory": false, "memory_strengthened": false, "assistant_mistake": false, "user_corrected_ai": false, "confidence": 0.95, "future_behavior_change": false, "reflection_summary": "ok", "actions": ["NO_ACTION"]}'
         result = self.reflection_service._parse_reflection(raw)
         self.assertFalse(result.new_memory)
@@ -467,7 +568,6 @@ class ReflectionPhase7Tests(unittest.TestCase):
     # Multiple strength increments cap at 1.0
     # ------------------------------------------------------------------
     def test_memory_strength_caps_at_max(self) -> None:
-        """Memory strength should not exceed 1.0."""
         mem_id = self._seed_memory("My favorite language is Java.", strength=0.95)
 
         self._run_reflection(
@@ -478,6 +578,67 @@ class ReflectionPhase7Tests(unittest.TestCase):
         updated = self.chroma_service.get_memory_by_id(mem_id)
         assert updated is not None
         self.assertAlmostEqual(updated["metadata"]["memory_strength"], 1.0, places=2)
+
+    # ------------------------------------------------------------------
+    # Assistant quality metrics stored correctly
+    # ------------------------------------------------------------------
+    def test_assistant_quality_metrics(self) -> None:
+        record = self._run_reflection(
+            user_message="Hello",
+            assistant_response="Hi there!",
+        )
+
+        aq = record.reflection.assistant_quality
+        self.assertIsInstance(aq, AssistantQuality)
+        self.assertGreaterEqual(aq.correctness, 0.0)
+        self.assertGreaterEqual(aq.clarity, 0.0)
+        self.assertGreaterEqual(aq.confidence, 0.0)
+        self.assertGreaterEqual(aq.hallucination_risk, 0.0)
+        self.assertLessEqual(aq.hallucination_risk, 1.0)
+
+    # ------------------------------------------------------------------
+    # Processing time is recorded
+    # ------------------------------------------------------------------
+    def test_processing_time_recorded(self) -> None:
+        record = self._run_reflection(
+            user_message="Hello",
+            assistant_response="Hi!",
+        )
+        self.assertGreaterEqual(record.processing_time_ms, 0.0)
+
+    # ------------------------------------------------------------------
+    # Statistics aggregation
+    # ------------------------------------------------------------------
+    def test_reflection_statistics(self) -> None:
+        self._run_reflection(
+            user_message="Hello",
+            assistant_response="Hi!",
+        )
+        self._run_reflection(
+            user_message="I still prefer Java.",
+            assistant_response="Great!",
+        )
+
+        stats = self.reflection_service.statistics()
+        self.assertIsInstance(stats, ReflectionStatistics)
+        self.assertGreaterEqual(stats.total_reflections, 2)
+        self.assertIn("NO_ACTION", stats.action_counts)
+
+    # ------------------------------------------------------------------
+    # Recent reflections
+    # ------------------------------------------------------------------
+    def test_recent_reflections(self) -> None:
+        self._run_reflection(
+            user_message="Hello",
+            assistant_response="Hi!",
+        )
+        self._run_reflection(
+            user_message="I still prefer Java.",
+            assistant_response="Great!",
+        )
+
+        recent = self.reflection_service.recent(limit=5)
+        self.assertGreaterEqual(len(recent), 2)
 
     # ------------------------------------------------------------------
     # Helpers

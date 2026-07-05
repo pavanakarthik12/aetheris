@@ -13,6 +13,7 @@ from typing import Any
 
 from .chroma_service import ChromaService, ChromaServiceError
 from .embedding_service import EmbeddingService, EmbeddingServiceError
+from .memory_resolver import extract_attribute, resolve_conflict, SINGLE_VALUE_ATTRIBUTES
 from .memory_service import MemoryService
 
 logger = logging.getLogger(__name__)
@@ -204,6 +205,10 @@ class MemoryEvolutionService:
     ) -> dict[str, Any]:
         """Create a brand-new memory with version 1.
 
+        Single-value attribute conflicts are automatically resolved before
+        the new memory is stored — any existing active memory for the same
+        attribute is archived.
+
         Args:
             memory_text: Text to store.
             metadata:    Optional metadata (version/status/history are set
@@ -211,12 +216,48 @@ class MemoryEvolutionService:
 
         Returns:
             dict with ``memory_id``, ``status``, ``version``, ``created_at``.
+
+        Raises:
+            MemoryEvolutionServiceError: If conflict resolution fails.
         """
+        # --- Conflict resolution for single-value attributes ---
+        resolution = await resolve_conflict(
+            memory_text=memory_text,
+            chroma_service=self._chroma_service,
+            archive_fn=self.archive_memory,
+        )
+
+        if not resolution.get("verified"):
+            err_msg = resolution.get("error") or "Unknown resolution error"
+            logger.error(
+                "Memory resolution failed | attribute=%s | error=%s",
+                resolution.get("attribute"), err_msg,
+            )
+            raise MemoryEvolutionServiceError(
+                f"Memory resolution failed: {err_msg}",
+                status_code=500,
+            )
+
+        if resolution["conflict_detected"]:
+            logger.info(
+                "New Active Memory | attribute=%s | text=%.80r",
+                resolution["attribute"], memory_text,
+            )
+
+        # --- Build metadata ---
         resolved = dict(metadata or {})
         resolved.setdefault("version", 1)
         resolved.setdefault("status", "active")
         resolved.setdefault("history", "[]")
+        resolved.setdefault("memory_strength", 0.60)
+        resolved.setdefault("created_at", datetime.now(tz=timezone.utc).isoformat())
         resolved["updated_at"] = datetime.now(tz=timezone.utc).isoformat()
+
+        # Tag the metadata with the detected attribute so future lookups can
+        # find this memory by attribute alone.
+        attr = resolution.get("attribute")
+        if attr:
+            resolved["attribute"] = attr
 
         result = await self._memory_service.save_memory(memory_text, metadata=resolved)
         return result
@@ -278,9 +319,37 @@ class MemoryEvolutionService:
         new_meta["history"] = json.dumps(old_history)
 
         # Preserve fields from old metadata unless explicitly overridden
-        for key in ("created_at", "source", "category", "importance", "tags", "reason"):
+        for key in (
+            "created_at", "source", "category", "importance", "tags", "reason",
+            "memory_strength", "last_strengthened_at", "attribute",
+        ):
             if key in old_meta and key not in new_meta:
                 new_meta.setdefault(key, old_meta[key])
+
+        # Detect single-value attribute in the new text and tag the metadata
+        detected_attr = extract_attribute(new_text)
+        if detected_attr and detected_attr in SINGLE_VALUE_ATTRIBUTES:
+            new_meta["attribute"] = detected_attr
+
+            # Check for conflict with another active memory for this attribute
+            if detected_attr != old_meta.get("attribute"):
+                try:
+                    conflicting = self._chroma_service.get_memories_by_metadata(
+                        where={"attribute": detected_attr, "status": "active"},
+                        limit=10,
+                    )
+                    for conf in conflicting:
+                        if conf["id"] != memory_id:
+                            logger.info(
+                                "Update conflict resolved | attribute=%s | archived=%s",
+                                detected_attr, conf["id"],
+                            )
+                            await self.archive_memory(conf["id"])
+                except Exception as exc:
+                    logger.warning(
+                        "Update conflict resolution failed | attribute=%s | error=%s",
+                        detected_attr, exc,
+                    )
 
         # Generate new embedding
         try:
@@ -360,6 +429,14 @@ class MemoryEvolutionService:
                 target_meta.get("importance", 0.5),
                 source_meta.get("importance", 0.5),
             )
+        if "memory_strength" not in meta:
+            meta["memory_strength"] = max(
+                target_meta.get("memory_strength", 0.6),
+                source_meta.get("memory_strength", 0.6),
+            )
+        for key in ("reason", "created_at", "last_strengthened_at"):
+            if key not in meta:
+                meta.setdefault(key, target_meta.get(key))
 
         result = await self.update_memory(
             memory_id=target_id,

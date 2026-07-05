@@ -285,6 +285,54 @@ class ChromaService:
             "metadata": results["metadatas"][0] or {},
         }
 
+    def get_memories_by_metadata(
+        self,
+        where: dict[str, Any],
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return memories matching a metadata filter.
+
+        Args:
+            where: ChromaDB ``where`` filter dict (e.g. ``{"attribute": "name",
+                   "status": "active"}``).
+            limit:  Maximum number of results (default: no limit).
+
+        Returns:
+            List of dicts, each with ``id``, ``document``, ``metadata``.
+
+        Raises:
+            ChromaServiceError: If the lookup fails.
+        """
+        collection = self._get_collection()
+        try:
+            kwargs: dict[str, Any] = {
+                "where": where,
+                "include": ["documents", "metadatas"],
+            }
+            if limit is not None:
+                kwargs["limit"] = limit
+            results = collection.get(**kwargs)
+        except Exception as exc:
+            logger.exception("ChromaDB metadata lookup failed | where=%s", where)
+            raise ChromaServiceError(f"Failed to query memories by metadata: {exc}") from exc
+
+        records: list[dict[str, Any]] = []
+        ids = results.get("ids", [])
+        documents = results.get("documents", [])
+        metadatas = results.get("metadatas", [])
+
+        for mem_id, doc, meta in zip(ids, documents, metadatas):
+            records.append({
+                "id": mem_id,
+                "document": doc,
+                "metadata": dict(meta) if meta else {},
+            })
+
+        logger.info(
+            "Metadata lookup | where=%s | results=%d", where, len(records),
+        )
+        return records
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------

@@ -110,3 +110,63 @@ def get_reflection_service(
         chroma_service=chroma_service,
         embedding_service=embedding_service,
     )
+
+
+def get_immediate_memory_processor(
+    memory_service: "MemoryService" = Depends(get_memory_service),
+    memory_evaluator: "MemoryEvaluatorService" = Depends(get_memory_evaluator_service),
+    memory_evolution: "MemoryEvolutionService" = Depends(get_memory_evolution_service),
+    chroma_service: "ChromaService" = Depends(get_chroma_service),
+    embedding_service: "EmbeddingService" = Depends(get_embedding_service),
+) -> "ImmediateMemoryProcessor":
+    """Provide an ImmediateMemoryProcessor wired to shared services."""
+
+    from .services.immediate_memory_processor import ImmediateMemoryProcessor
+
+    return ImmediateMemoryProcessor(
+        memory_service=memory_service,
+        memory_evaluator=memory_evaluator,
+        memory_evolution=memory_evolution,
+        chroma_service=chroma_service,
+        embedding_service=embedding_service,
+    )
+
+
+def get_intent_classifier(
+    llm_service: "LLMService" = Depends(get_llm_service),
+) -> "IntentClassifier":
+    """Provide the combined intent classifier with rule + LLM fallback."""
+
+    from .services.intent_classifier import IntentClassifier
+
+    return IntentClassifier(llm_service=llm_service)
+
+
+def get_request_router(
+    llm_service: "LLMService" = Depends(get_llm_service),
+    memory_service: "MemoryService" = Depends(get_memory_service),
+    memory_evaluator: "MemoryEvaluatorService" = Depends(get_memory_evaluator_service),
+    memory_evolution: "MemoryEvolutionService" = Depends(get_memory_evolution_service),
+    chroma_service: "ChromaService" = Depends(get_chroma_service),
+    embedding_service: "EmbeddingService" = Depends(get_embedding_service),
+    context_builder: "ContextBuilderService" = Depends(get_context_builder_service),
+    reflection_service: "ReflectionService" = Depends(get_reflection_service),
+    intent_classifier: "IntentClassifier" = Depends(get_intent_classifier),
+    immediate_memory_processor: "ImmediateMemoryProcessor" = Depends(get_immediate_memory_processor),
+) -> "CognitiveRequestRouter":
+    """Provide the CognitiveRequestRouter wired to all subsystems."""
+
+    from .services.request_router import CognitiveRequestRouter
+
+    return CognitiveRequestRouter(
+        llm_service=llm_service,
+        memory_service=memory_service,
+        memory_evaluator=memory_evaluator,
+        memory_evolution=memory_evolution,
+        chroma_service=chroma_service,
+        embedding_service=embedding_service,
+        context_builder=context_builder,
+        reflection_service=reflection_service,
+        intent_classifier=intent_classifier,
+        immediate_memory_processor=immediate_memory_processor,
+    )
