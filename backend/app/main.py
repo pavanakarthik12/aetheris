@@ -13,6 +13,7 @@ from .routers.chat import router as chat_router
 from .routers.health import router as health_router
 from .routers.memory import router as memory_router
 from .routers.memory_evolution import router as memory_evolution_router
+from .routers.reflection import router as reflection_router
 from .utils.logging import configure_logging
 
 
@@ -48,6 +49,7 @@ def create_app() -> FastAPI:
     application.include_router(chat_router)
     application.include_router(memory_router)
     application.include_router(memory_evolution_router)
+    application.include_router(reflection_router)
 
     return application
 

@@ -22,7 +22,7 @@ import logging
 from time import perf_counter
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
 from ..dependencies import (
     get_context_builder_service,
@@ -30,6 +30,7 @@ from ..dependencies import (
     get_memory_evaluator_service,
     get_memory_evolution_service,
     get_memory_service,
+    get_reflection_service,
 )
 from ..schemas.chat import ChatRequest, ChatResponse
 from ..services.context_builder import ContextBuilderService
@@ -37,6 +38,7 @@ from ..services.llm_service import LLMService, LLMServiceError
 from ..services.memory_evaluator import MemoryEvaluation, MemoryEvaluatorService, MemoryEvaluatorServiceError
 from ..services.memory_evolution_service import MemoryEvolutionService, MemoryEvolutionServiceError
 from ..services.memory_service import MemoryService
+from ..services.reflection_service import ReflectionService
 
 router = APIRouter(tags=["chat"])
 logger = logging.getLogger(__name__)
@@ -48,11 +50,13 @@ _MEMORY_TOP_K: int = 5
 @router.post("/api/chat", response_model=ChatResponse)
 async def chat(
     request: ChatRequest,
+    background_tasks: BackgroundTasks,
     llm_service: LLMService = Depends(get_llm_service),
     memory_service: MemoryService = Depends(get_memory_service),
     memory_evaluator_service: MemoryEvaluatorService = Depends(get_memory_evaluator_service),
     memory_evolution_service: MemoryEvolutionService = Depends(get_memory_evolution_service),
     context_builder: ContextBuilderService = Depends(get_context_builder_service),
+    reflection_service: ReflectionService = Depends(get_reflection_service),
 ) -> ChatResponse:
     """Retrieve relevant memories, inject them into the prompt, call Qwen.
 
@@ -261,6 +265,12 @@ async def chat(
         llm_ms,
         total_ms,
         injected_count,
+    )
+
+    background_tasks.add_task(
+        reflection_service.reflect_with_context,
+        request.message,
+        response_text,
     )
 
     return ChatResponse(response=response_text, memory_count=injected_count)

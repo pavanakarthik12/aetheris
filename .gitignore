@@ -16,3 +16,4 @@ database/chroma/*
 !database/chroma/.gitkeep
 database/postgres/*
 !database/postgres/.gitkeep
+backend/app/reflections/*.json

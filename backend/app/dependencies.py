@@ -92,3 +92,21 @@ def get_database_service() -> "DatabaseService":
     from .services.database_service import DatabaseService
 
     return DatabaseService(get_settings())
+
+
+def get_reflection_service(
+    llm_service: LLMService = Depends(get_llm_service),
+    memory_service: "MemoryService" = Depends(get_memory_service),
+    chroma_service: "ChromaService" = Depends(get_chroma_service),
+    embedding_service: "EmbeddingService" = Depends(get_embedding_service),
+) -> "ReflectionService":
+    """Provide a ReflectionService wired to the shared LLM, memory, and chroma services."""
+
+    from .services.reflection_service import ReflectionService
+
+    return ReflectionService(
+        llm_service=llm_service,
+        memory_service=memory_service,
+        chroma_service=chroma_service,
+        embedding_service=embedding_service,
+    )

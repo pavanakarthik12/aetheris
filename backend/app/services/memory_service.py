@@ -256,6 +256,7 @@ def _build_metadata(
         "source": "user",
         "tags": "",
         "importance": 0.5,
+        "memory_strength": 0.60,
     }
 
     if caller_meta:

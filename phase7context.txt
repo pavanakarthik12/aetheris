@@ -1,0 +1,369 @@
+# Aetheris – Phase 7: Cognitive Reflection Engine
+
+You are a Senior AI Systems Architect.
+
+We are building **Aetheris**, a modular cognitive AI architecture.
+
+This is **ONLY Phase 7**.
+
+Do NOT implement:
+
+* Personality
+* Emotion
+* Planner
+* Knowledge Graph
+* Internet Access
+* Tool Calling
+* Autonomous Agents
+* Memory Compression
+* Multi-Agent Systems
+
+Only implement the **Reflection Engine**.
+
+---
+
+# Objective
+
+Aetheris should learn from every completed interaction.
+
+Reflection is an internal cognitive process.
+
+The user must NEVER see it.
+
+Every completed conversation should trigger an automatic reflection cycle.
+
+---
+
+# Reflection Pipeline
+
+User Message
+
+↓
+
+Memory Retrieval
+
+↓
+
+LLM Response
+
+↓
+
+Reflection Engine
+
+↓
+
+Lessons Learned
+
+↓
+
+Memory Update
+
+↓
+
+End
+
+Reflection ALWAYS happens AFTER the response has already been sent.
+
+It must NEVER delay the user's response.
+
+---
+
+# Create
+
+backend/app/services/reflection_service.py
+
+---
+
+# Responsibilities
+
+The Reflection Engine must analyze the completed interaction.
+
+It should answer these questions internally.
+
+1.
+
+Did the user reveal new long-term information?
+
+2.
+
+Should an existing memory be updated?
+
+3.
+
+Did this interaction strengthen an existing memory?
+
+4.
+
+Did the assistant misunderstand the user?
+
+5.
+
+Did the assistant answer with low confidence?
+
+6.
+
+Did the user correct the assistant?
+
+7.
+
+Should future responses change because of this interaction?
+
+---
+
+# Reflection Output
+
+Return ONLY valid JSON.
+
+Example
+
+{
+"new_memory": true,
+"update_memory": false,
+"memory_strengthened": true,
+"assistant_mistake": false,
+"user_corrected_ai": false,
+"confidence": 0.93,
+"future_behavior_change": false,
+"reflection_summary": "User confirmed their long-term AI project.",
+"actions": [
+"strengthen_memory"
+]
+}
+
+---
+
+# Reflection Types
+
+Support these actions only.
+
+CREATE_MEMORY
+
+UPDATE_MEMORY
+
+MERGE_MEMORY
+
+STRENGTHEN_MEMORY
+
+NO_ACTION
+
+---
+
+# Memory Strength
+
+Introduce a new metadata field.
+
+memory_strength
+
+Range
+
+0.0 → 1.0
+
+Every time the same information is confirmed,
+
+increase memory_strength.
+
+Example
+
+User
+
+"My favorite language is Java."
+
+memory_strength = 0.60
+
+Later
+
+"I still enjoy Java."
+
+memory_strength = 0.75
+
+Repeated confirmations increase confidence.
+
+---
+
+# Assistant Error Detection
+
+Detect situations where
+
+* user corrected the assistant
+* assistant admitted uncertainty
+* assistant answered incorrectly
+
+Store these reflections separately.
+
+Future versions of Aetheris will use them for self-improvement.
+
+---
+
+# Reflection History
+
+Create
+
+backend/app/reflections/
+
+Store every reflection.
+
+Do NOT mix reflections with memories.
+
+Reflections are internal experiences.
+
+---
+
+# Integration
+
+Reflection runs automatically after every completed conversation.
+
+The chat endpoint must not wait.
+
+Run it asynchronously using FastAPI BackgroundTasks.
+
+The user receives the response immediately.
+
+Reflection continues in the background.
+
+---
+
+# Logging
+
+Log
+
+Reflection Started
+
+Reflection Completed
+
+Reflection Time
+
+Action Taken
+
+Memory Updated
+
+Errors
+
+---
+
+# Error Handling
+
+If reflection fails
+
+Never interrupt the user.
+
+Never lose the conversation.
+
+Log the failure.
+
+Continue normally.
+
+---
+
+# API
+
+Create
+
+GET /api/reflections
+
+GET /api/reflections/{id}
+
+GET /api/reflections/history
+
+These endpoints are for debugging only.
+
+---
+
+# Code Quality
+
+Use
+
+SOLID Principles
+
+Dependency Injection
+
+Type Hints
+
+Pydantic Models
+
+Reusable Services
+
+Clean Architecture
+
+No duplicated code.
+
+---
+
+# Testing
+
+Scenario 1
+
+User
+
+"My favorite language is Java."
+
+Later
+
+"I still prefer Java."
+
+Expected
+
+Reflection action
+
+STRENGTHEN_MEMORY
+
+---
+
+Scenario 2
+
+Assistant
+
+"You said Python."
+
+User
+
+"No, I said Java."
+
+Expected
+
+Reflection detects
+
+assistant_mistake = true
+
+user_corrected_ai = true
+
+---
+
+Scenario 3
+
+User
+
+"I finished my Kubernetes certification."
+
+Expected
+
+Reflection recommends
+
+UPDATE_MEMORY
+
+---
+
+Scenario 4
+
+Simple greeting
+
+"Hello"
+
+Expected
+
+NO_ACTION
+
+---
+
+# Deliverables
+
+Explain
+
+1. The complete reflection pipeline.
+2. Where reflection executes.
+3. How background execution works.
+4. How reflections differ from memories.
+5. How memory strength changes over time.
+
+The Reflection Engine must become Aetheris' internal learning mechanism.
+
+The user should never directly interact with it.
