@@ -1,290 +1,311 @@
-# Aetheris – Phase 7: Cognitive Reflection Engine
+# Aetheris – Phase 8: Intelligent Context Builder & Memory Relevance Filtering
 
-You are a Senior AI Systems Architect.
+You are a Principal AI Systems Architect.
 
-We are building **Aetheris**, a modular cognitive AI architecture.
+This is a core architectural improvement.
 
-This is **ONLY Phase 7**.
+Do NOT redesign Aetheris.
 
-Do NOT implement:
+Do NOT modify the Memory Service, Reflection Engine, Cognitive Request Router, or Provider Manager.
 
-* Personality
-* Emotion
-* Planner
-* Knowledge Graph
-* Internet Access
-* Tool Calling
-* Autonomous Agents
-* Memory Compression
-* Multi-Agent Systems
-
-Only implement the **Reflection Engine**.
+Your task is to redesign ONLY the Context Builder so that it injects **only relevant memories** into the LLM prompt.
 
 ---
 
-# Objective
+# Problem
 
-Aetheris should learn from every completed interaction.
+The current Context Builder blindly sends retrieved memories to the LLM.
 
-Reflection is an internal cognitive process.
-
-The user must NEVER see it.
-
-Every completed conversation should trigger an automatic reflection cycle.
-
----
-
-# Reflection Pipeline
-
-User Message
-
-↓
-
-Memory Retrieval
-
-↓
-
-LLM Response
-
-↓
-
-Reflection Engine
-
-↓
-
-Lessons Learned
-
-↓
-
-Memory Update
-
-↓
-
-End
-
-Reflection ALWAYS happens AFTER the response has already been sent.
-
-It must NEVER delay the user's response.
-
----
-
-# Create
-
-backend/app/services/reflection_service.py
-
----
-
-# Responsibilities
-
-The Reflection Engine must analyze the completed interaction.
-
-It should answer these questions internally.
-
-1.
-
-Did the user reveal new long-term information?
-
-2.
-
-Should an existing memory be updated?
-
-3.
-
-Did this interaction strengthen an existing memory?
-
-4.
-
-Did the assistant misunderstand the user?
-
-5.
-
-Did the assistant answer with low confidence?
-
-6.
-
-Did the user correct the assistant?
-
-7.
-
-Should future responses change because of this interaction?
-
----
-
-# Reflection Output
-
-Return ONLY valid JSON.
-
-Example
-
-{
-"new_memory": true,
-"update_memory": false,
-"memory_strengthened": true,
-"assistant_mistake": false,
-"user_corrected_ai": false,
-"confidence": 0.93,
-"future_behavior_change": false,
-"reflection_summary": "User confirmed their long-term AI project.",
-"actions": [
-"strengthen_memory"
-]
-}
-
----
-
-# Reflection Types
-
-Support these actions only.
-
-CREATE_MEMORY
-
-UPDATE_MEMORY
-
-MERGE_MEMORY
-
-STRENGTHEN_MEMORY
-
-NO_ACTION
-
----
-
-# Memory Strength
-
-Introduce a new metadata field.
-
-memory_strength
-
-Range
-
-0.0 → 1.0
-
-Every time the same information is confirmed,
-
-increase memory_strength.
+This causes unrelated memories to appear in responses.
 
 Example
 
 User
 
-"My favorite language is Java."
+"What is 5 + 5?"
 
-memory_strength = 0.60
+Retrieved Memories
 
-Later
+* Building Aetheris
+* Favorite Language = Python
+* Likes Pizza
+* Swimming
 
-"I still enjoy Java."
+Current Response
 
-memory_strength = 0.75
+The LLM unnecessarily talks about Aetheris, Python, pizza, and swimming.
 
-Repeated confirmations increase confidence.
-
----
-
-# Assistant Error Detection
-
-Detect situations where
-
-* user corrected the assistant
-* assistant admitted uncertainty
-* assistant answered incorrectly
-
-Store these reflections separately.
-
-Future versions of Aetheris will use them for self-improvement.
+This is incorrect.
 
 ---
 
-# Reflection History
+# Objective
 
-Create
+The Context Builder must become intelligent.
 
-backend/app/reflections/
+It must determine whether each retrieved memory is relevant to the current user request.
 
-Store every reflection.
-
-Do NOT mix reflections with memories.
-
-Reflections are internal experiences.
+Only relevant memories may be included in the final prompt.
 
 ---
 
-# Integration
+# New Context Pipeline
 
-Reflection runs automatically after every completed conversation.
+User Message
 
-The chat endpoint must not wait.
+↓
 
-Run it asynchronously using FastAPI BackgroundTasks.
+Memory Search
 
-The user receives the response immediately.
+↓
 
-Reflection continues in the background.
+Top K Results
+
+↓
+
+Memory Relevance Filter
+
+↓
+
+Remove Irrelevant Memories
+
+↓
+
+Context Builder
+
+↓
+
+LLM
+
+---
+
+# Memory Relevance Filter
+
+Create:
+
+backend/app/services/memory_relevance_filter.py
+
+Responsibilities:
+
+* Receive user message
+* Receive retrieved memories
+* Score each memory for relevance
+* Remove irrelevant memories
+* Return only useful memories
+
+---
+
+# Relevance Scoring
+
+Each memory receives a relevance score.
+
+Factors:
+
+* Semantic similarity
+* Intent match
+* Memory category
+* Recency
+* Memory strength
+* User request type
+
+Final score:
+
+0.0 → 1.0
+
+---
+
+# Threshold
+
+Default relevance threshold
+
+0.65
+
+If relevance < threshold
+
+Discard the memory.
+
+Do not include it in the prompt.
+
+---
+
+# Query Classification
+
+Before building context, classify the query.
+
+Supported types:
+
+MATH
+
+GENERAL_KNOWLEDGE
+
+MEMORY_QUERY
+
+PERSONAL_INFORMATION
+
+PROJECT_DISCUSSION
+
+PROGRAMMING
+
+CASUAL_CHAT
+
+GREETING
+
+WEB_SEARCH
+
+UNKNOWN
+
+---
+
+# Context Rules
+
+## Math
+
+Example
+
+"What is 5 + 5?"
+
+Inject:
+
+No memories.
+
+---
+
+## Greeting
+
+"Hi"
+
+Inject:
+
+No memories.
+
+---
+
+## Programming
+
+"Explain recursion."
+
+Inject:
+
+Programming preferences only if relevant.
+
+Ignore food, hobbies, names, etc.
+
+---
+
+## Personal Memory
+
+"What is my favorite language?"
+
+Inject:
+
+Favorite language memory only.
+
+---
+
+## Project
+
+"What project am I building?"
+
+Inject:
+
+Project memories only.
+
+---
+
+## Food
+
+"What food do I like?"
+
+Inject:
+
+Food memories only.
+
+---
+
+# Context Size
+
+Maximum memories:
+
+5
+
+Recommended:
+
+3
+
+Never send unrelated memories simply because they were retrieved.
+
+---
+
+# Empty Context
+
+If no relevant memories exist
+
+Do NOT force context.
+
+Simply call the LLM with:
+
+System Prompt
+
+*
+
+User Message
+
+---
+
+# Prompt Optimization
+
+Never include:
+
+* Archived memories
+* Duplicate memories
+* Historical values
+* Reflection history
+* Internal metadata
+* Memory IDs
+
+Only inject concise, user-facing memory facts.
 
 ---
 
 # Logging
 
-Log
+Log:
 
-Reflection Started
+Query Type
 
-Reflection Completed
+Retrieved Memories
 
-Reflection Time
+Relevant Memories
 
-Action Taken
+Discarded Memories
 
-Memory Updated
+Relevance Score
 
-Errors
+Context Size
 
----
-
-# Error Handling
-
-If reflection fails
-
-Never interrupt the user.
-
-Never lose the conversation.
-
-Log the failure.
-
-Continue normally.
+Filtering Time
 
 ---
 
-# API
+# Dashboard
 
-Create
+Expose:
 
-GET /api/reflections
+GET /api/context/debug
 
-GET /api/reflections/{id}
+Return:
 
-GET /api/reflections/history
+Query
 
-These endpoints are for debugging only.
+Retrieved Memories
 
----
+Discarded Memories
 
-# Code Quality
+Final Context
 
-Use
+Relevance Scores
 
-SOLID Principles
-
-Dependency Injection
-
-Type Hints
-
-Pydantic Models
-
-Reusable Services
-
-Clean Architecture
-
-No duplicated code.
+Execution Time
 
 ---
 
@@ -294,37 +315,27 @@ Scenario 1
 
 User
 
-"My favorite language is Java."
-
-Later
-
-"I still prefer Java."
+"What is 5 + 5?"
 
 Expected
 
-Reflection action
+No memories injected.
 
-STRENGTHEN_MEMORY
+Response
+
+10
 
 ---
 
 Scenario 2
 
-Assistant
-
-"You said Python."
-
 User
 
-"No, I said Java."
+"What project am I building?"
 
 Expected
 
-Reflection detects
-
-assistant_mistake = true
-
-user_corrected_ai = true
+Only project memories injected.
 
 ---
 
@@ -332,38 +343,60 @@ Scenario 3
 
 User
 
-"I finished my Kubernetes certification."
+"What is my favorite programming language?"
 
 Expected
 
-Reflection recommends
-
-UPDATE_MEMORY
+Only language memory injected.
 
 ---
 
 Scenario 4
 
-Simple greeting
+User
 
 "Hello"
 
 Expected
 
-NO_ACTION
+No memory retrieval.
+
+Immediate greeting.
+
+---
+
+Scenario 5
+
+User
+
+"Summarize everything you know about me."
+
+Expected
+
+Inject all active relevant memories.
+
+---
+
+# Performance
+
+Target:
+
+Context filtering
+
+< 20 ms
+
+Memory filtering must not noticeably increase response latency.
 
 ---
 
 # Deliverables
 
-Explain
+1. Implement the Memory Relevance Filter.
+2. Prevent unrelated memories from entering prompts.
+3. Classify user queries before context building.
+4. Inject only relevant memories.
+5. Skip context entirely when no relevant memories exist.
+6. Preserve backward compatibility with the existing Memory Service and Cognitive Request Router.
+7. Produce concise, focused prompts that improve response quality and reduce token usage.
 
-1. The complete reflection pipeline.
-2. Where reflection executes.
-3. How background execution works.
-4. How reflections differ from memories.
-5. How memory strength changes over time.
-
-The Reflection Engine must become Aetheris' internal learning mechanism.
-
-The user should never directly interact with it.
+The final result should make Aetheris context-aware rather than context-heavy, ensuring every injected memory directly contributes to answering the user's current question.

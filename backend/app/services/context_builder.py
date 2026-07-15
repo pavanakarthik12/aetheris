@@ -1,10 +1,13 @@
-"""Context Builder — formats retrieved memories into a clean prompt block."""
-
 from __future__ import annotations
 
 import logging
 from typing import Any
 
+from .memory_relevance_filter import (
+    FilterResult,
+    QueryType,
+    filter_memories,
+)
 from .prompt_builder import PromptBuilder
 
 logger = logging.getLogger(__name__)
@@ -14,38 +17,70 @@ _MAX_MEMORIES_IN_CONTEXT: int = 5
 
 
 class ContextBuilderService:
-    """Format retrieved memory records into a structured LLM context block."""
-
     def build_memory_context(
         self,
         memories: list[dict[str, Any]],
         min_score: float = _MIN_SCORE,
         max_memories: int = _MAX_MEMORIES_IN_CONTEXT,
+        query: str = "",
     ) -> str:
         if not memories:
             logger.debug("build_memory_context | no memories provided")
             return ""
 
-        filtered = self._remove_archived(memories)
-        filtered = self._filter(filtered, min_score)
+        filter_result = filter_memories(
+            query=query,
+            memories=memories,
+            threshold=min_score,
+            max_memories=max_memories,
+        )
+
+        if filter_result.query_type in (QueryType.MATH, QueryType.GREETING):
+            logger.debug(
+                "build_memory_context | query_type=%s — skipping all memories",
+                filter_result.query_type.value,
+            )
+            return ""
+
+        filtered = self._remove_archived(filter_result.relevant_memories)
         deduplicated = self._deduplicate(filtered)
         capped = deduplicated[:max_memories]
 
         if not capped:
-            logger.debug(
-                "build_memory_context | all %d memories dropped by filter/dedup",
+            logger.info(
+                "build_memory_context | query_type=%s | all %d memories dropped | %d discarded by filter | %d deduplicated",
+                filter_result.query_type.value,
                 len(memories),
+                len(filter_result.discarded_memories),
+                len(filtered) - len(deduplicated),
             )
             return ""
 
         result = PromptBuilder.memory_context_block(capped)
 
         logger.info(
-            "Context block built | total_input=%d | surviving=%d",
+            "build_memory_context | query_type=%s | total=%d | relevant=%d | discarded=%d | deduped=%d | final=%d | %.2fms",
+            filter_result.query_type.value,
             len(memories),
+            len(filter_result.relevant_memories),
+            len(filter_result.discarded_memories),
+            len(filtered) - len(deduplicated),
             len(capped),
+            filter_result.execution_time_ms,
         )
         return result
+
+    def debug_filter(
+        self,
+        query: str,
+        memories: list[dict[str, Any]],
+    ) -> FilterResult:
+        return filter_memories(
+            query=query,
+            memories=memories,
+            threshold=_MIN_SCORE,
+            max_memories=_MAX_MEMORIES_IN_CONTEXT,
+        )
 
     @staticmethod
     def _remove_archived(
@@ -55,22 +90,6 @@ class ContextBuilderService:
         for m in memories:
             meta = m.get("metadata", {})
             if meta.get("status") == "archived":
-                continue
-            result.append(m)
-        return result
-
-    @staticmethod
-    def _filter(
-        memories: list[dict[str, Any]],
-        min_score: float,
-    ) -> list[dict[str, Any]]:
-        result: list[dict[str, Any]] = []
-        for m in memories:
-            doc = m.get("document", "")
-            score = m.get("score", 0.0)
-            if not isinstance(doc, str) or not doc.strip():
-                continue
-            if score < min_score:
                 continue
             result.append(m)
         return result

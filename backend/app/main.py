@@ -10,6 +10,7 @@ from .dependencies import get_llm_service
 from .middleware.error_handlers import register_exception_handlers
 from .middleware.request_id import RequestIdMiddleware
 from .routers.chat import router as chat_router
+from .routers.context_debug import router as context_debug_router
 from .routers.health import router as health_router
 from .routers.memory import router as memory_router
 from .routers.memory_evolution import router as memory_evolution_router
@@ -48,6 +49,7 @@ def create_app() -> FastAPI:
     register_exception_handlers(application)
     application.include_router(health_router, prefix=settings.api_v1_prefix)
     application.include_router(chat_router)
+    application.include_router(context_debug_router)
     application.include_router(memory_router)
     application.include_router(memory_evolution_router)
     application.include_router(reflection_router)
