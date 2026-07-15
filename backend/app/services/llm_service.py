@@ -1,95 +1,161 @@
-"""Isolated LLM service boundary for Qwen communication."""
-
 from __future__ import annotations
 
 import logging
-import time
 from typing import Any
-from urllib.parse import urlparse
-
-import httpx
 
 from ..config.settings import Settings, get_settings
-
-
-class LLMServiceError(RuntimeError):
-    """Raised when the LLM boundary cannot complete a request."""
-
-    def __init__(self, message: str, status_code: int = 502) -> None:
-        super().__init__(message)
-        self.status_code = status_code
+from .circuit_breaker import CircuitBreaker
+from .exceptions import (
+    LLMServiceError,
+    LLMQuotaExceeded,
+    LLMRateLimited,
+    ProviderBadRequest,
+    ProviderConflict,
+    ProviderConnectionError,
+    ProviderForbidden,
+    ProviderMalformedResponse,
+    ProviderNotFound,
+    ProviderServerError,
+    ProviderTimeout,
+    ProviderUnauthorized,
+    ProviderUnavailable,
+)
+from .provider_health import ProviderHealthMonitor
+from .providers.groq_provider import GroqProvider
+from .providers.openrouter_provider import OpenRouterProvider
+from .providers.provider_interface import LLMProvider
+from .providers.provider_manager import ProviderManager
 
 
 class LLMService:
-    """Encapsulate provider selection, model identity, and Qwen access."""
+    _DEFAULT_MAX_TOKENS: int = 512
+    _DEFAULT_TEMPERATURE: float = 0.7
 
     def __init__(self, settings: Settings | None = None) -> None:
         self._settings = settings or get_settings()
         self._logger = logging.getLogger(__name__)
-        self._client: httpx.AsyncClient | None = None
+        self._manager: ProviderManager | None = None
+        self._validate_providers()
 
-    # ------------------------------------------------------------------
-    # Properties
-    # ------------------------------------------------------------------
+    def _validate_providers(self) -> None:
+        errors: list[str] = []
+
+        if not self._settings.openrouter_api_key:
+            errors.append("OPENROUTER_API_KEY is not configured")
+
+        if not self._settings.groq_api_key:
+            errors.append("GROQ_API_KEY is not configured")
+
+        if not self._settings.openrouter_base_url.startswith("http"):
+            errors.append(f"OPENROUTER_BASE_URL is invalid: {self._settings.openrouter_base_url}")
+
+        if not self._settings.groq_base_url.startswith("http"):
+            errors.append(f"GROQ_BASE_URL is invalid: {self._settings.groq_base_url}")
+
+        if not self._settings.openrouter_model:
+            errors.append("OPENROUTER_MODEL is not configured")
+
+        if not self._settings.groq_model:
+            errors.append("GROQ_MODEL is not configured")
+
+        if errors:
+            for err in errors:
+                self._logger.warning("Provider config warning: %s", err)
+
+        self._logger.info(
+            "Providers loaded | primary=%s (%s) | secondary=%s (%s) | failover=%s | circuit_breaker=%s",
+            self._settings.primary_provider,
+            self._settings.openrouter_model,
+            self._settings.secondary_provider,
+            self._settings.groq_model,
+            self._settings.enable_provider_failover,
+            self._settings.enable_circuit_breaker,
+        )
+
+    def _build_manager(self) -> ProviderManager:
+        if self._manager is not None:
+            return self._manager
+
+        providers: list[LLMProvider] = []
+
+        primary_name = self._settings.primary_provider.lower()
+        secondary_name = self._settings.secondary_provider.lower()
+
+        if primary_name == "openrouter":
+            providers.append(OpenRouterProvider(
+                api_key=self._settings.openrouter_api_key,
+                base_url=self._settings.openrouter_base_url,
+                model=self._settings.openrouter_model,
+                timeout=self._settings.llm_timeout,
+            ))
+        else:
+            providers.append(OpenRouterProvider(
+                api_key=self._settings.qwen_api_key,
+                base_url=self._settings.qwen_base_url,
+                model=self._settings.llm_model,
+                timeout=self._settings.llm_timeout,
+            ))
+
+        if secondary_name == "groq":
+            providers.append(GroqProvider(
+                api_key=self._settings.groq_api_key,
+                base_url=self._settings.groq_base_url,
+                model=self._settings.groq_model,
+                timeout=self._settings.llm_timeout,
+            ))
+
+        self._manager = ProviderManager(
+            providers=providers,
+            enable_failover=self._settings.enable_provider_failover,
+            enable_circuit_breaker=self._settings.enable_circuit_breaker,
+        )
+        return self._manager
+
+    @property
+    def _provider_manager(self) -> ProviderManager:
+        return self._build_manager()
 
     @property
     def provider(self) -> str:
-        """Return the configured LLM provider name."""
-        return self._settings.llm_provider
+        return self._provider_manager.active_provider_name
 
     @property
     def model_name(self) -> str:
-        """Return the configured LLM model name."""
-        return self._settings.llm_model
+        return self._provider_manager.active_model_name
 
     @property
     def api_key(self) -> str:
-        """Return the configured provider API key."""
         return self._settings.qwen_api_key
 
     @property
     def base_url(self) -> str:
-        """Return the configured provider base URL."""
         return self._settings.qwen_base_url.rstrip("/")
 
     @property
-    def _uses_openrouter(self) -> bool:
-        hostname = urlparse(self.base_url).hostname or ""
-        return "openrouter.ai" in hostname
+    def circuit_breaker(self) -> CircuitBreaker:
+        return self._provider_manager.primary_provider.circuit_breaker
 
     @property
-    def _uses_dashscope(self) -> bool:
-        hostname = urlparse(self.base_url).hostname or ""
-        return "dashscope.aliyuncs.com" in hostname
+    def health_monitor(self) -> ProviderHealthMonitor:
+        return self._provider_manager.primary_provider.health
 
-    # ------------------------------------------------------------------
-    # Lifecycle
-    # ------------------------------------------------------------------
+    @property
+    def provider_manager(self) -> ProviderManager:
+        return self._provider_manager
 
     async def aclose(self) -> None:
-        """Close the reusable HTTP client."""
-        if self._client is not None:
-            await self._client.aclose()
-            self._client = None
+        pass
 
-    # ------------------------------------------------------------------
-    # Public generation API
-    # ------------------------------------------------------------------
-
-    async def generate_text(self, prompt: str) -> str:
-        """Send a single user message to Qwen and return the assistant reply.
-
-        Preserved for backward compatibility.  New callers should prefer
-        ``generate_with_context()`` which handles system prompts and memory.
-
-        Args:
-            prompt: Raw text sent as a single user message.
-
-        Returns:
-            The assistant's reply as a plain string.
-        """
+    async def generate_text(
+        self,
+        prompt: str,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+    ) -> str:
         return await self._chat_completion(
             messages=[{"role": "user", "content": prompt}],
+            max_tokens=max_tokens,
+            temperature=temperature,
         )
 
     async def generate_with_context(
@@ -97,27 +163,9 @@ class LLMService:
         user_message: str,
         system_prompt: str,
         memory_context: str = "",
+        max_tokens: int | None = None,
+        temperature: float | None = None,
     ) -> str:
-        """Send a structured request to Qwen with system prompt and memory context.
-
-        Builds the OpenAI-compatible messages array in this order:
-          1. ``system`` — Aetheris identity and behaviour instructions.
-          2. ``user``   — optional memory context block prepended to the
-                          user's message in a single turn.
-
-        Combining memory and user text into one user turn avoids mid-conversation
-        system messages that some providers handle inconsistently.
-
-        Args:
-            user_message:   The raw text from the user.
-            system_prompt:  Identity/instruction text for the ``system`` role.
-            memory_context: Pre-formatted memory block from ContextBuilderService.
-                            Pass ``""`` when no memories are available — the
-                            method handles that gracefully.
-
-        Returns:
-            The assistant's reply as a plain string.
-        """
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
         ]
@@ -130,8 +178,6 @@ class LLMService:
         else:
             user_turn = user_message.strip()
 
-        final_prompt = f"{system_prompt.strip()}\n\n{user_turn}".strip()
-
         messages.append({"role": "user", "content": user_turn})
 
         self._logger.info(
@@ -139,133 +185,33 @@ class LLMService:
             bool(memory_context.strip()),
             len(user_message),
         )
-        self._logger.info("Final prompt sent to the LLM:\n%s", final_prompt)
 
-        return await self._chat_completion(messages=messages)
+        return await self._chat_completion(
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
 
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    def _ensure_ready(self) -> None:
-        """Raise LLMServiceError if the service is not properly configured."""
-        if self.provider.lower() != "qwen":
-            raise LLMServiceError(
-                "Unsupported LLM provider configured.", status_code=500
-            )
-        if not self.api_key:
-            raise LLMServiceError(
-                "QWEN_API_KEY is not configured.", status_code=500
-            )
-        if self._uses_dashscope and self.api_key.startswith("sk-or-v1-"):
-            raise LLMServiceError(
-                "QWEN_API_KEY appears to be an OpenRouter key, but QWEN_BASE_URL "
-                "points to DashScope. Use a DashScope API key or set "
-                "QWEN_BASE_URL=https://openrouter.ai/api/v1.",
-                status_code=500,
-            )
-
-    def _get_client(self) -> httpx.AsyncClient:
-        """Return the shared async HTTP client, creating it on first call."""
-        if self._client is None:
-            self._client = httpx.AsyncClient(
-                base_url=self.base_url,
-                timeout=httpx.Timeout(30.0, connect=10.0),
-                headers={"Authorization": f"Bearer {self.api_key}"},
-            )
-        return self._client
-
-    async def _chat_completion(self, messages: list[dict[str, Any]]) -> str:
-        """Send a messages array to the Qwen chat completions endpoint.
-
-        Every public generation method funnels through here so error
-        normalisation and timing logs live in exactly one place.
-
-        Args:
-            messages: List of ``{"role": ..., "content": ...}`` dicts.
-
-        Returns:
-            The assistant reply content as a stripped string.
-
-        Raises:
-            LLMServiceError: On auth failure, network error, or bad payload.
-        """
-        self._ensure_ready()
-        client = self._get_client()
-        started_at = time.perf_counter()
+    async def _chat_completion(
+        self,
+        messages: list[dict[str, Any]],
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+    ) -> str:
+        effective_max_tokens = max_tokens if max_tokens is not None else self._DEFAULT_MAX_TOKENS
+        effective_temperature = temperature if temperature is not None else self._DEFAULT_TEMPERATURE
 
         self._logger.info(
-            "LLM request | provider=%s | model=%s | message_count=%d",
+            "LLM request | provider=%s | model=%s | message_count=%d | max_tokens=%d | temperature=%.2f",
             self.provider,
             self.model_name,
             len(messages),
+            effective_max_tokens,
+            effective_temperature,
         )
 
-        try:
-            response = await client.post(
-                "/chat/completions",
-                json={
-                    "model": self.model_name,
-                    "messages": messages,
-                    "temperature": 0.7,
-                    "max_tokens": 512,
-                },
-            )
-            response.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            status_code = exc.response.status_code
-            detail = self._extract_error_message(exc.response)
-            if status_code == 401:
-                raise LLMServiceError(
-                    "Authentication failed for the configured LLM endpoint. "
-                    "Check QWEN_API_KEY and QWEN_BASE_URL. "
-                    f"Provider detail: {detail}",
-                    status_code=401,
-                ) from exc
-            raise LLMServiceError(
-                f"Qwen API returned an error: {detail}"
-            ) from exc
-        except httpx.RequestError as exc:
-            raise LLMServiceError("Unable to reach the Qwen API.") from exc
-
-        duration_ms = (time.perf_counter() - started_at) * 1000
-        self._logger.info(
-            "LLM response received | provider=%s | model=%s | duration_ms=%.2f",
-            self.provider,
-            self.model_name,
-            duration_ms,
+        return await self._provider_manager.generate(
+            messages=messages,
+            max_tokens=effective_max_tokens,
+            temperature=effective_temperature,
         )
-
-        payload = response.json()
-        try:
-            content = payload["choices"][0]["message"]["content"]
-        except (KeyError, IndexError, TypeError) as exc:
-            raise LLMServiceError(
-                "Qwen API returned an unexpected payload."
-            ) from exc
-
-        if not isinstance(content, str) or not content.strip():
-            raise LLMServiceError("Qwen API returned an empty response.")
-
-        self._logger.info("LLM reply length=%d", len(content))
-        return content.strip()
-
-    @staticmethod
-    def _extract_error_message(response: httpx.Response) -> str:
-        """Pull a human-readable error message out of an error response."""
-        try:
-            payload = response.json()
-        except ValueError:
-            return response.text[:200] or f"HTTP {response.status_code}"
-
-        if isinstance(payload, dict):
-            error = payload.get("error")
-            if isinstance(error, dict):
-                message = error.get("message")
-                if isinstance(message, str) and message.strip():
-                    return message.strip()
-            message = payload.get("message")
-            if isinstance(message, str) and message.strip():
-                return message.strip()
-
-        return f"HTTP {response.status_code}"

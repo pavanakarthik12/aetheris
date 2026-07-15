@@ -1,12 +1,4 @@
-"""Intent Classifier — determines user intent from a message.
-
-Uses a modular architecture:
-  - RuleIntentClassifier (fast, keyword-based)
-  - LLMIntentClassifier (LLM-based for ambiguous cases)
-  - IntentClassifier (combined, tries rules first then LLM fallback)
-
-Future classifiers can be added by extending BaseIntentClassifier.
-"""
+"""Intent Classifier — determines user intent from a message."""
 
 from __future__ import annotations
 
@@ -17,12 +9,9 @@ from typing import Any
 
 from ..schemas.routing import IntentClassification, IntentType
 from .llm_service import LLMService
+from .prompt_builder import PromptBuilder
 
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Rule-based triggers
-# ---------------------------------------------------------------------------
 
 _DELETE_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"\b(forget|delete|remove|erase|discard)\b", re.IGNORECASE),
@@ -92,28 +81,12 @@ _MULTI_ACTION_PATTERNS: list[re.Pattern[str]] = [
 
 
 class BaseIntentClassifier(ABC):
-    """Abstract base for all intent classifier implementations."""
-
     @abstractmethod
     async def classify(self, message: str) -> IntentClassification:
-        """Return the classified intent for *message*."""
+        ...
 
 
 class RuleIntentClassifier(BaseIntentClassifier):
-    """Fast keyword/pattern-based intent classification.
-
-    Priority order (first match wins):
-      1. MULTI_ACTION
-      2. DELETE_MEMORY
-      3. CREATE_MEMORY
-      4. UPDATE_MEMORY
-      5. MERGE_MEMORY
-      6. SEARCH_MEMORY
-      7. WEB_SEARCH
-      8. SYSTEM_QUERY
-      9. NORMAL_CHAT (default)
-    """
-
     async def classify(self, message: str) -> IntentClassification:
         if not message or not message.strip():
             return IntentClassification(
@@ -122,7 +95,6 @@ class RuleIntentClassifier(BaseIntentClassifier):
                 classifier_source="rule",
             )
 
-        # MULTI_ACTION — contains multiple distinct intents
         if any(p.search(message) for p in _MULTI_ACTION_PATTERNS):
             sub_intents = self._detect_sub_intents(message)
             if len(sub_intents) > 1:
@@ -134,7 +106,6 @@ class RuleIntentClassifier(BaseIntentClassifier):
                     classifier_source="rule",
                 )
 
-        # DELETE_MEMORY
         if any(p.search(message) for p in _DELETE_PATTERNS):
             return IntentClassification(
                 primary_intent=IntentType.DELETE_MEMORY,
@@ -142,7 +113,6 @@ class RuleIntentClassifier(BaseIntentClassifier):
                 classifier_source="rule",
             )
 
-        # CREATE_MEMORY
         if any(p.search(message) for p in _CREATE_MEMORY_PATTERNS):
             return IntentClassification(
                 primary_intent=IntentType.CREATE_MEMORY,
@@ -150,7 +120,6 @@ class RuleIntentClassifier(BaseIntentClassifier):
                 classifier_source="rule",
             )
 
-        # UPDATE_MEMORY
         if any(p.search(message) for p in _UPDATE_PATTERNS):
             return IntentClassification(
                 primary_intent=IntentType.UPDATE_MEMORY,
@@ -158,7 +127,6 @@ class RuleIntentClassifier(BaseIntentClassifier):
                 classifier_source="rule",
             )
 
-        # MERGE_MEMORY
         if any(p.search(message) for p in _MERGE_PATTERNS):
             return IntentClassification(
                 primary_intent=IntentType.MERGE_MEMORY,
@@ -166,7 +134,6 @@ class RuleIntentClassifier(BaseIntentClassifier):
                 classifier_source="rule",
             )
 
-        # SEARCH_MEMORY
         if any(p.search(message) for p in _SEARCH_PATTERNS):
             return IntentClassification(
                 primary_intent=IntentType.SEARCH_MEMORY,
@@ -174,7 +141,6 @@ class RuleIntentClassifier(BaseIntentClassifier):
                 classifier_source="rule",
             )
 
-        # WEB_SEARCH
         if any(p.search(message) for p in _WEB_SEARCH_PATTERNS):
             return IntentClassification(
                 primary_intent=IntentType.WEB_SEARCH,
@@ -182,7 +148,6 @@ class RuleIntentClassifier(BaseIntentClassifier):
                 classifier_source="rule",
             )
 
-        # SYSTEM_QUERY
         if any(p.search(message) for p in _SYSTEM_PATTERNS):
             return IntentClassification(
                 primary_intent=IntentType.SYSTEM_QUERY,
@@ -190,7 +155,6 @@ class RuleIntentClassifier(BaseIntentClassifier):
                 classifier_source="rule",
             )
 
-        # Default: normal chat
         return IntentClassification(
             primary_intent=IntentType.NORMAL_CHAT,
             confidence=0.6,
@@ -221,34 +185,6 @@ class RuleIntentClassifier(BaseIntentClassifier):
 
 
 class LLMIntentClassifier(BaseIntentClassifier):
-    """LLM-based intent classifier for ambiguous cases.
-
-    Falls back to the LLM when rule-based classification confidence
-    is below threshold.  The prompt asks the LLM to classify intent.
-    """
-
-    _CLASSIFY_PROMPT: str = (
-        "You are the Aetheris Intent Classifier. "
-        "Classify the user's intent from this message. "
-        "Return ONLY valid JSON. No markdown, no code fences.\n\n"
-        '{"intent": "NORMAL_CHAT", "confidence": 1.0, "reason": ""}\n\n'
-        "Choose from:\n"
-        "- NORMAL_CHAT: Casual conversation, greetings, opinions, questions about general topics.\n"
-        "- CREATE_MEMORY: User wants you to remember or save something.\n"
-        "- UPDATE_MEMORY: User corrects or changes previously stated information.\n"
-        "- DELETE_MEMORY: User wants to forget or delete a memory.\n"
-        "- MERGE_MEMORY: User wants to combine information.\n"
-        "- SEARCH_MEMORY: User asks what you remember or requests stored information.\n"
-        "- WEB_SEARCH: User asks for current events, news, or online information.\n"
-        "- SYSTEM_QUERY: User asks about your identity, capabilities, or configuration.\n"
-        "- MULTI_ACTION: User makes multiple distinct requests in one message.\n"
-        "- UNKNOWN: Cannot determine intent.\n\n"
-        "Rules:\n"
-        "- If the message has multiple distinct requests, use MULTI_ACTION.\n"
-        "- If in doubt, prefer NORMAL_CHAT over UNKNOWN.\n"
-        "- confidence must be a number from 0 to 1.\n"
-    )
-
     def __init__(self, llm_service: LLMService) -> None:
         self._llm = llm_service
 
@@ -260,7 +196,7 @@ class LLMIntentClassifier(BaseIntentClassifier):
                 classifier_source="llm",
             )
 
-        prompt = f"{self._CLASSIFY_PROMPT}\n\nUser message:\n{message.strip()}"
+        prompt = PromptBuilder.intent_classification(message)
         try:
             raw = await self._llm.generate_text(prompt)
             parsed = self._parse_response(raw)
@@ -302,14 +238,6 @@ class LLMIntentClassifier(BaseIntentClassifier):
 
 
 class IntentClassifier(BaseIntentClassifier):
-    """Combined intent classifier with rule-based fast path + LLM fallback.
-
-    Uses rules first (fast, < 1 ms).  If confidence is below threshold
-    or intent is UNKNOWN/NORMAL_CHAT with low confidence, falls back to
-    the LLM classifier.  The LLM result replaces the rule result when
-    its confidence is higher.
-    """
-
     _RULE_CONFIDENCE_FLOOR: float = 0.6
 
     def __init__(
@@ -328,8 +256,8 @@ class IntentClassifier(BaseIntentClassifier):
             return rule_result
 
         logger.debug(
-            "Rule classifier confidence below threshold (%.2f < %.2f) "
-            "— falling back to LLM classifier",
+            "Rule classifier confidence below threshold (%.2f < %.2f)"
+            " — falling back to LLM classifier",
             rule_result.confidence,
             self._RULE_CONFIDENCE_FLOOR,
         )

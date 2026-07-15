@@ -198,29 +198,60 @@ class MemoryEvolutionService:
             "explanation": "No strong conflict or update detected. Creating a new memory.",
         }
 
+    async def _deduplicate_or_strengthen(
+        self,
+        memory_text: str,
+        metadata: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        """Search for near-duplicate active memories.
+
+        If a very similar memory exists (score >= 0.85), strengthen it
+        instead of creating a duplicate. Returns the result dict from
+        strengthening, or None if no duplicate was found.
+
+        Strengthening increments memory_strength and updates last_accessed.
+        """
+        related = await self._memory_service.search_memory(
+            query=memory_text, top_k=3, include_archived=False,
+        )
+        for mem in related:
+            if mem.get("score", 0) >= 0.85:
+                mem_id = mem["id"]
+                meta = dict(mem.get("metadata", {}))
+                current = meta.get("memory_strength", 0.6)
+                meta["memory_strength"] = min(current + 0.1, 1.0)
+                meta["last_accessed"] = datetime.now(tz=timezone.utc).isoformat()
+                meta["updated_at"] = meta["last_accessed"]
+                try:
+                    new_embedding = await self._embedding_service.embed_text(mem["document"])
+                    self._chroma_service.update_memory(
+                        memory_id=mem_id,
+                        embedding=new_embedding,
+                        document=mem["document"],
+                        metadata=meta,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Strengthen failed | id=%s | error=%s", mem_id, exc,
+                    )
+                    return None
+                logger.info(
+                    "Duplicate prevented | strengthened existing | id=%s | "
+                    "score=%.4f | strength=%.2f", mem_id, mem["score"], current,
+                )
+                return {"memory_id": mem_id, "status": "strengthened", "duplicate": True}
+
+        return None
+
     async def create_memory(
         self,
         memory_text: str,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Create a brand-new memory with version 1.
+        dedup = await self._deduplicate_or_strengthen(memory_text, metadata)
+        if dedup:
+            return dedup
 
-        Single-value attribute conflicts are automatically resolved before
-        the new memory is stored — any existing active memory for the same
-        attribute is archived.
-
-        Args:
-            memory_text: Text to store.
-            metadata:    Optional metadata (version/status/history are set
-                         automatically).
-
-        Returns:
-            dict with ``memory_id``, ``status``, ``version``, ``created_at``.
-
-        Raises:
-            MemoryEvolutionServiceError: If conflict resolution fails.
-        """
-        # --- Conflict resolution for single-value attributes ---
         resolution = await resolve_conflict(
             memory_text=memory_text,
             chroma_service=self._chroma_service,
@@ -244,7 +275,6 @@ class MemoryEvolutionService:
                 resolution["attribute"], memory_text,
             )
 
-        # --- Build metadata ---
         resolved = dict(metadata or {})
         resolved.setdefault("version", 1)
         resolved.setdefault("status", "active")
@@ -253,8 +283,6 @@ class MemoryEvolutionService:
         resolved.setdefault("created_at", datetime.now(tz=timezone.utc).isoformat())
         resolved["updated_at"] = datetime.now(tz=timezone.utc).isoformat()
 
-        # Tag the metadata with the detected attribute so future lookups can
-        # find this memory by attribute alone.
         attr = resolution.get("attribute")
         if attr:
             resolved["attribute"] = attr

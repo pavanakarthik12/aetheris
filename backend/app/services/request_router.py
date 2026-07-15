@@ -1,19 +1,4 @@
-"""Cognitive Request Router (CRR) — the central execution engine for Aetheris.
-
-Every incoming request passes through the CRR before reaching any subsystem.
-The CRR:
-  1. Classifies intent
-  2. Routes to the correct subsystem(s)
-  3. Executes backend actions BEFORE any LLM call
-  4. Builds context
-  5. Calls the LLM only when necessary
-  6. Returns a complete result
-
-Future capabilities (Calendar, Email, GitHub, Filesystem, Planner,
-Knowledge Graph, Emotion Engine, Personality Engine, Voice, etc.)
-register new routes by extending the routing table without modifying
-existing logic.
-"""
+"""Cognitive Request Router (CRR) — the central execution engine for Aetheris."""
 
 from __future__ import annotations
 
@@ -34,11 +19,26 @@ from .context_builder import ContextBuilderService
 from .embedding_service import EmbeddingService
 from .immediate_memory_processor import ImmediateMemoryProcessor
 from .intent_classifier import IntentClassifier
-from .llm_service import LLMService, LLMServiceError
+from .greeting_handler import detect_greeting
+from .llm_service import (
+    LLMService,
+    LLMServiceError,
+    LLMQuotaExceeded,
+    LLMRateLimited,
+    ProviderConnectionError,
+    ProviderServerError,
+    ProviderTimeout,
+    ProviderUnauthorized,
+    ProviderUnavailable,
+)
+from .memory_cache import MemorySearchCache
 from .memory_evaluator import MemoryEvaluatorService
 from .memory_evolution_service import MemoryEvolutionService
 from .memory_service import MemoryService
+from .metrics_collector import MetricsCollector
+from .prompt_builder import PromptBuilder
 from .reflection_service import ReflectionService
+from .token_budget import select_budget
 
 logger = logging.getLogger(__name__)
 
@@ -46,14 +46,7 @@ _MEMORY_TOP_K: int = 5
 
 
 class CognitiveRequestRouter:
-    """Single entry point for all user requests.
-
-    Pipeline:
-      1. classify(message) → IntentClassification
-      2. route(classification) → execute subsystems, gather context
-      3. call LLM (if needed) with gathered context
-      4. return RouterResult with response + debug info
-    """
+    """Single entry point for all user requests."""
 
     def __init__(
         self,
@@ -78,37 +71,46 @@ class CognitiveRequestRouter:
         self._reflection_service = reflection_service
         self._intent_classifier = intent_classifier
         self._imm = immediate_memory_processor
-
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
+        self._prompt_builder = PromptBuilder()
+        self._cache = MemorySearchCache()
+        self._metrics = MetricsCollector()
 
     async def route(
         self,
         message: str,
     ) -> RouterResult:
-        """Classify, execute subsystems, call LLM, and return the result.
-
-        Args:
-            message: The raw user message.
-
-        Returns:
-            RouterResult containing the response and full debug info.
-        """
         started_at = perf_counter()
         steps: list[RouteStep] = []
         debug = RouterDebugifier()
 
-        # Step 1 — Classify intent
+        greeting_response = detect_greeting(message)
+        if greeting_response is not None:
+            elapsed = (perf_counter() - started_at) * 1000
+            steps.append(RouteStep(
+                subsystem="GreetingHandler",
+                action="local_response",
+                duration_ms=elapsed,
+                success=True,
+                detail="Greeting detected — LLM bypassed.",
+            ))
+            debug.set_duration(elapsed)
+            debug.set_steps(steps)
+            return RouterResult(
+                response=greeting_response,
+                memory_count=0,
+                memory_action=MemoryActionType.SKIP,
+                memory_success=True,
+                debug=debug.build(),
+            )
+
         classification = await self._classify(message, steps)
         debug.set_intent(classification)
 
-        # Step 2 — Route to the correct handler
         subsystems: list[str] = []
 
         try:
             if classification.primary_intent == IntentType.NORMAL_CHAT:
-                result = await self._handle_normal_chat(message, steps, debug)
+                result = await self._handle_normal_chat(message, steps, debug, classification)
                 subsystems = ["ImmediateMemoryProcessor", "MemoryService", "ContextBuilder", "LLM"]
 
             elif classification.primary_intent == IntentType.CREATE_MEMORY:
@@ -144,7 +146,7 @@ class CognitiveRequestRouter:
                 subsystems = classification.metadata.get("subsystems", ["LLM"])
 
             else:
-                result = await self._handle_normal_chat(message, steps, debug)
+                result = await self._handle_normal_chat(message, steps, debug, classification)
                 subsystems = ["ImmediateMemoryProcessor", "MemoryService", "ContextBuilder", "LLM"]
 
         except Exception as exc:
@@ -166,10 +168,6 @@ class CognitiveRequestRouter:
 
         result.debug = debug.build()
         return result
-
-    # ------------------------------------------------------------------
-    # Intent Classification
-    # ------------------------------------------------------------------
 
     async def _classify(
         self,
@@ -197,29 +195,33 @@ class CognitiveRequestRouter:
         ))
         return classification
 
-    # ------------------------------------------------------------------
-    # Route Handlers
-    # ------------------------------------------------------------------
-
     async def _handle_normal_chat(
         self,
         message: str,
         steps: list[RouteStep],
         debug: RouterDebugifier,
+        classification: IntentClassification | None = None,
     ) -> RouterResult:
-        """NORMAL_CHAT: evaluate memory, retrieve context, call LLM."""
         imm_result = await self._run_imm(message, steps)
+        if imm_result.action in (MemoryActionType.CREATE, MemoryActionType.UPDATE, MemoryActionType.MERGE):
+            self._cache.invalidate()
 
         memories = await self._retrieve_memories(message, steps)
         memory_context = self._build_context(memories, steps)
         injected_count = self._count_injected(memory_context)
-        system_prompt = self._context_builder.build_system_prompt()
+
+        budget = select_budget(
+            message,
+            intent=classification.primary_intent if classification else None,
+            memory_count=injected_count,
+        )
 
         response = await self._call_llm(
             message=message,
-            system_prompt=system_prompt,
             memory_context=memory_context,
             steps=steps,
+            max_tokens=budget.max_tokens,
+            temperature=budget.temperature,
         )
 
         debug.set_memory_action(imm_result.action)
@@ -242,7 +244,6 @@ class CognitiveRequestRouter:
         steps: list[RouteStep],
         debug: RouterDebugifier,
     ) -> RouterResult:
-        """CREATE_MEMORY: evaluate → create → confirm → LLM response."""
         started = perf_counter()
 
         try:
@@ -275,24 +276,26 @@ class CognitiveRequestRouter:
                     "reason": evaluation.reason,
                 },
             )
+            self._cache.invalidate()
             steps.append(RouteStep(
                 subsystem="MemoryEvolution",
                 action="create_memory",
                 duration_ms=(perf_counter() - started) * 1000,
                 success=True,
-                detail=f"memory_id={result.get('memory_id')}",
+                detail=f"memory_id={result.get('memory_id')} dedup={result.get('duplicate', False)}",
             ))
 
             debug.set_memory_action(MemoryActionType.CREATE)
             debug.set_memory_operation_count(1)
             debug.set_reflection(True)
 
-            confirmation = "I've saved that information. "
+            budget = select_budget(message, intent=IntentType.CREATE_MEMORY)
             response = await self._call_llm(
                 message=message,
-                system_prompt=self._context_builder.build_system_prompt(),
-                memory_context=f"Note: The user's message was just saved as a new memory.\n{confirmation}",
+                memory_context="Note: The user's message was just saved as a new memory. I've saved that information.",
                 steps=steps,
+                max_tokens=budget.max_tokens,
+                temperature=budget.temperature,
             )
             return RouterResult(
                 response=response,
@@ -318,7 +321,6 @@ class CognitiveRequestRouter:
         steps: list[RouteStep],
         debug: RouterDebugifier,
     ) -> RouterResult:
-        """UPDATE_MEMORY: decide_evolution → update → retrieve → LLM."""
         try:
             related = await self._memory_service.search_memory(query=message, top_k=_MEMORY_TOP_K)
             evaluation = await self._memory_evaluator.evaluate_memory(message)
@@ -348,6 +350,7 @@ class CognitiveRequestRouter:
                             "reason": evaluation.reason,
                         },
                     )
+                    self._cache.invalidate()
                     steps.append(RouteStep(
                         subsystem="MemoryEvolution",
                         action="update_memory",
@@ -368,6 +371,7 @@ class CognitiveRequestRouter:
                         "reason": evaluation.reason,
                     },
                 )
+                self._cache.invalidate()
                 steps.append(RouteStep(
                     subsystem="MemoryEvolution",
                     action="create_memory",
@@ -380,18 +384,19 @@ class CognitiveRequestRouter:
 
             memories = await self._retrieve_memories(message, steps)
             memory_context = self._build_context(memories, steps)
-            injected_count = self._count_injected(memory_context)
 
+            budget = select_budget(message, intent=IntentType.UPDATE_MEMORY, memory_count=self._count_injected(memory_context))
             response = await self._call_llm(
                 message=message,
-                system_prompt=self._context_builder.build_system_prompt(),
                 memory_context=memory_context,
                 steps=steps,
+                max_tokens=budget.max_tokens,
+                temperature=budget.temperature,
             )
 
             return RouterResult(
                 response=response,
-                memory_count=injected_count,
+                memory_count=self._count_injected(memory_context),
                 memory_action=debug._memory_action,
                 memory_success=True,
             )
@@ -413,7 +418,6 @@ class CognitiveRequestRouter:
         steps: list[RouteStep],
         debug: RouterDebugifier,
     ) -> RouterResult:
-        """DELETE_MEMORY: search → delete → verify → truthful response."""
         started = perf_counter()
 
         try:
@@ -456,6 +460,7 @@ class CognitiveRequestRouter:
                 )
 
             self._memory_service.delete_memory(mem["id"])
+            self._cache.invalidate()
             steps.append(RouteStep(
                 subsystem="MemoryService",
                 action="delete_memory",
@@ -467,7 +472,7 @@ class CognitiveRequestRouter:
             debug.set_memory_operation_count(1)
 
             return RouterResult(
-                response=f"I've successfully deleted that memory.",
+                response="I've successfully deleted that memory.",
                 memory_count=0,
                 memory_action=MemoryActionType.DELETE,
                 memory_success=True,
@@ -494,7 +499,6 @@ class CognitiveRequestRouter:
         steps: list[RouteStep],
         debug: RouterDebugifier,
     ) -> RouterResult:
-        """MERGE_MEMORY: decide_evolution → merge → retrieve → LLM."""
         try:
             evaluation = await self._memory_evaluator.evaluate_memory(message)
             decision = await self._memory_evolution.decide_evolution(
@@ -521,6 +525,7 @@ class CognitiveRequestRouter:
                         "reason": evaluation.reason,
                     },
                 )
+                self._cache.invalidate()
                 steps.append(RouteStep(
                     subsystem="MemoryEvolution",
                     action="merge_memory",
@@ -533,11 +538,13 @@ class CognitiveRequestRouter:
 
             memories = await self._retrieve_memories(message, steps)
             memory_context = self._build_context(memories, steps)
+            budget = select_budget(message, memory_count=self._count_injected(memory_context))
             response = await self._call_llm(
                 message=message,
-                system_prompt=self._context_builder.build_system_prompt(),
                 memory_context=memory_context,
                 steps=steps,
+                max_tokens=budget.max_tokens,
+                temperature=budget.temperature,
             )
 
             return RouterResult(
@@ -564,11 +571,9 @@ class CognitiveRequestRouter:
         steps: list[RouteStep],
         debug: RouterDebugifier,
     ) -> RouterResult:
-        """SEARCH_MEMORY: search → context → LLM."""
         memories = await self._retrieve_memories(message, steps)
         memory_context = self._build_context(memories, steps)
         injected_count = self._count_injected(memory_context)
-        system_prompt = self._context_builder.build_system_prompt()
 
         if not memory_context:
             steps.append(RouteStep(
@@ -578,11 +583,13 @@ class CognitiveRequestRouter:
                 detail="No memories found matching the query.",
             ))
 
+        budget = select_budget(message, intent=IntentType.SEARCH_MEMORY)
         response = await self._call_llm(
             message=message,
-            system_prompt=system_prompt,
             memory_context=memory_context,
             steps=steps,
+            max_tokens=budget.max_tokens,
+            temperature=budget.temperature,
         )
 
         return RouterResult(
@@ -598,12 +605,6 @@ class CognitiveRequestRouter:
         steps: list[RouteStep],
         debug: RouterDebugifier,
     ) -> RouterResult:
-        """WEB_SEARCH: search web → summarize → context → LLM.
-
-        The WebSearchService is designed as a plug-in module.  When a real
-        web search implementation is added, it registers itself here without
-        modifying other routing logic.
-        """
         debug.set_internet_used(True)
 
         steps.append(RouteStep(
@@ -613,23 +614,21 @@ class CognitiveRequestRouter:
             detail="Web search dispatched.",
         ))
 
-        web_context = (
-            "[Web Search Results]\n"
-            "The user requested a web search. "
-            "Web search functionality is available as a plug-in. "
-            "Respond based on your existing knowledge or let the user know "
-            "if the information requires a live internet connection."
-        )
-
         memories = await self._retrieve_memories(message, steps)
         memory_context = self._build_context(memories, steps)
-        combined_context = f"{web_context}\n\n{memory_context}" if memory_context else web_context
+        combined_context = (
+            "[Web search requested. Respond from your existing knowledge or note if a live connection is needed.]"
+        )
+        if memory_context:
+            combined_context = f"{combined_context}\n\n{memory_context}"
 
+        budget = select_budget(message)
         response = await self._call_llm(
             message=message,
-            system_prompt=self._context_builder.build_system_prompt(),
             memory_context=combined_context,
             steps=steps,
+            max_tokens=budget.max_tokens,
+            temperature=budget.temperature,
         )
 
         return RouterResult(
@@ -645,22 +644,16 @@ class CognitiveRequestRouter:
         steps: list[RouteStep],
         debug: RouterDebugifier,
     ) -> RouterResult:
-        """SYSTEM_QUERY: answer identity/capability questions."""
-        system_context = (
-            "[System Information]\n"
-            "You are Aetheris, a cognitive AI assistant built with memory, "
-            "reflection, and intent-aware routing capabilities."
-        )
-
         memories = await self._retrieve_memories(message, steps)
         memory_context = self._build_context(memories, steps)
-        combined_context = f"{system_context}\n\n{memory_context}" if memory_context else system_context
 
+        budget = select_budget(message, intent=IntentType.SYSTEM_QUERY)
         response = await self._call_llm(
             message=message,
-            system_prompt=self._context_builder.build_system_prompt(),
-            memory_context=combined_context,
+            memory_context=memory_context,
             steps=steps,
+            max_tokens=budget.max_tokens,
+            temperature=budget.temperature,
         )
 
         return RouterResult(
@@ -677,10 +670,9 @@ class CognitiveRequestRouter:
         steps: list[RouteStep],
         debug: RouterDebugifier,
     ) -> RouterResult:
-        """MULTI_ACTION: execute multiple sub-intents, combine results."""
         sub_intents = classification.sub_intents
         if not sub_intents:
-            return await self._handle_normal_chat(message, steps, debug)
+            return await self._handle_normal_chat(message, steps, debug, classification)
 
         sub_steps: list[RouteStep] = []
         context_parts: list[str] = []
@@ -702,6 +694,7 @@ class CognitiveRequestRouter:
                                 "reason": sub_result.reason,
                             },
                         )
+                        self._cache.invalidate()
                         context_parts.append(f"[Action {i + 1}: Memory saved ({result.get('memory_id', '')[:8]}…)]")
                         memory_action = MemoryActionType.CREATE
                         subsystems.add("MemoryEvaluator")
@@ -747,11 +740,13 @@ class CognitiveRequestRouter:
         if memory_context:
             combined_context = f"{combined_context}\n\n{memory_context}" if combined_context else memory_context
 
+        budget = select_budget(message)
         response = await self._call_llm(
             message=message,
-            system_prompt=self._context_builder.build_system_prompt(),
             memory_context=combined_context,
             steps=steps,
+            max_tokens=budget.max_tokens,
+            temperature=budget.temperature,
         )
 
         debug.set_memory_action(memory_action)
@@ -766,16 +761,11 @@ class CognitiveRequestRouter:
             memory_success=True,
         )
 
-    # ------------------------------------------------------------------
-    # Shared building blocks
-    # ------------------------------------------------------------------
-
     async def _run_imm(
         self,
         message: str,
         steps: list[RouteStep],
     ):
-        """Run the ImmediateMemoryProcessor and record timing."""
         started = perf_counter()
         result = await self._imm.process_message(message)
         elapsed = (perf_counter() - started) * 1000
@@ -794,11 +784,25 @@ class CognitiveRequestRouter:
         steps: list[RouteStep],
     ) -> list[dict[str, Any]]:
         started = perf_counter()
+
+        cached = self._cache.get(message)
+        if cached is not None:
+            elapsed = (perf_counter() - started) * 1000
+            steps.append(RouteStep(
+                subsystem="MemoryCache",
+                action="cache_hit",
+                duration_ms=elapsed,
+                success=True,
+                detail=f"found={len(cached)}",
+            ))
+            return cached
+
         try:
             memories = await self._memory_service.search_memory(
                 query=message,
                 top_k=_MEMORY_TOP_K,
             )
+            self._cache.set(message, memories)
             elapsed = (perf_counter() - started) * 1000
             steps.append(RouteStep(
                 subsystem="MemoryService",
@@ -836,16 +840,20 @@ class CognitiveRequestRouter:
     async def _call_llm(
         self,
         message: str,
-        system_prompt: str,
         memory_context: str,
         steps: list[RouteStep],
+        system_prompt: str | None = None,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
     ) -> str:
         started = perf_counter()
         try:
             response = await self._llm.generate_with_context(
                 user_message=message,
-                system_prompt=system_prompt,
+                system_prompt=system_prompt or self._prompt_builder.chat_system(),
                 memory_context=memory_context,
+                max_tokens=max_tokens,
+                temperature=temperature,
             )
             elapsed = (perf_counter() - started) * 1000
             steps.append(RouteStep(
@@ -853,9 +861,81 @@ class CognitiveRequestRouter:
                 action="generate_with_context",
                 duration_ms=elapsed,
                 success=True,
-                detail=f"response_length={len(response)}",
+                detail=f"response_length={len(response)} max_tokens={max_tokens}",
             ))
             return response
+        except LLMQuotaExceeded:
+            elapsed = (perf_counter() - started) * 1000
+            steps.append(RouteStep(
+                subsystem="LLM",
+                action="generate_with_context",
+                duration_ms=elapsed,
+                success=False,
+                detail="402 Quota Exceeded",
+            ))
+            return ("The configured AI model is currently unavailable because "
+                    "the provider account has insufficient credits.")
+        except LLMRateLimited:
+            elapsed = (perf_counter() - started) * 1000
+            steps.append(RouteStep(
+                subsystem="LLM",
+                action="generate_with_context",
+                duration_ms=elapsed,
+                success=False,
+                detail="429 Rate Limited",
+            ))
+            return "The AI provider is temporarily busy. Please try again in a few seconds."
+        except ProviderUnauthorized:
+            elapsed = (perf_counter() - started) * 1000
+            steps.append(RouteStep(
+                subsystem="LLM",
+                action="generate_with_context",
+                duration_ms=elapsed,
+                success=False,
+                detail="401 Unauthorized",
+            ))
+            return ("The AI provider returned an authentication error. "
+                    "The API key may be invalid or expired.")
+        except ProviderUnavailable:
+            elapsed = (perf_counter() - started) * 1000
+            steps.append(RouteStep(
+                subsystem="LLM",
+                action="generate_with_context",
+                duration_ms=elapsed,
+                success=False,
+                detail="503 Unavailable",
+            ))
+            return "The AI provider is temporarily unavailable."
+        except ProviderConnectionError:
+            elapsed = (perf_counter() - started) * 1000
+            steps.append(RouteStep(
+                subsystem="LLM",
+                action="generate_with_context",
+                duration_ms=elapsed,
+                success=False,
+                detail="Connection Error",
+            ))
+            return "Unable to connect to the AI provider. Please check your network connection."
+        except ProviderServerError:
+            elapsed = (perf_counter() - started) * 1000
+            steps.append(RouteStep(
+                subsystem="LLM",
+                action="generate_with_context",
+                duration_ms=elapsed,
+                success=False,
+                detail="500 Server Error",
+            ))
+            return "The AI provider returned a server error. Please try again."
+        except ProviderTimeout:
+            elapsed = (perf_counter() - started) * 1000
+            steps.append(RouteStep(
+                subsystem="LLM",
+                action="generate_with_context",
+                duration_ms=elapsed,
+                success=False,
+                detail="Timeout",
+            ))
+            return "The AI service took too long to respond. Please try again."
         except LLMServiceError as exc:
             elapsed = (perf_counter() - started) * 1000
             steps.append(RouteStep(
@@ -865,7 +945,19 @@ class CognitiveRequestRouter:
                 success=False,
                 detail=str(exc),
             ))
-            return "I'm having trouble generating a response right now. Please try again."
+            return (f"I encountered an issue while generating a response. "
+                    f"Please try again or rephrase your message.")
+        except Exception as exc:
+            elapsed = (perf_counter() - started) * 1000
+            steps.append(RouteStep(
+                subsystem="LLM",
+                action="generate_with_context",
+                duration_ms=elapsed,
+                success=False,
+                detail=f"Unexpected error: {exc}",
+            ))
+            logger.exception("Unexpected LLM error")
+            return "An unexpected error occurred while processing your request. Please try again."
 
     async def _build_llm_response_with_context(
         self,
@@ -880,11 +972,13 @@ class CognitiveRequestRouter:
         elif hint:
             memory_context = hint
 
+        budget = select_budget(message)
         response = await self._call_llm(
             message=message,
-            system_prompt=self._context_builder.build_system_prompt(),
             memory_context=memory_context,
             steps=steps,
+            max_tokens=budget.max_tokens,
+            temperature=budget.temperature,
         )
         return RouterResult(
             response=response,
@@ -898,6 +992,9 @@ class CognitiveRequestRouter:
         if not memory_context:
             return 0
         return sum(1 for line in memory_context.splitlines() if line.startswith("- "))
+
+    def get_metrics_snapshot(self) -> dict[str, Any]:
+        return self._metrics.snapshot()
 
 
 class RouterDebugifier:

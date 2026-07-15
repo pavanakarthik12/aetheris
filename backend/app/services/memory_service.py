@@ -182,11 +182,18 @@ class MemoryService:
         if not include_archived:
             results = _filter_active(results)
 
-        logger.info("Memory search returned %d result(s) | query=%.60r", len(results), query)
+        # 4. Deduplicate by normalized text and smart-sort
+        results = _deduplicate_results(results)
+        results = _smart_sort(results)
+
+        logger.info("Memory search returned %d result(s) after dedup | query=%.60r", len(results), query)
         for i, r in enumerate(results):
             logger.info(
-                "  result[%d] | score=%.4f | text=%.80r",
-                i, r.get("score", 0), r.get("document", ""),
+                "  result[%d] | score=%.4f | strength=%.2f | importance=%.2f | text=%.80r",
+                i, r.get("score", 0),
+                r.get("metadata", {}).get("memory_strength", 0.0),
+                r.get("metadata", {}).get("importance", 0.0),
+                r.get("document", ""),
             )
         return results
 
@@ -264,11 +271,7 @@ def _build_metadata(
     caller_meta: dict[str, Any] | None,
     created_at: str,
 ) -> dict[str, Any]:
-    """Merge caller-supplied metadata over sensible defaults.
-
-    ChromaDB only accepts str / int / float / bool values in metadata.
-    Lists are serialised to comma-separated strings automatically.
-    """
+    """Merge caller-supplied metadata over sensible defaults."""
     defaults: dict[str, Any] = {
         "created_at": created_at,
         "source": "user",
@@ -279,13 +282,21 @@ def _build_metadata(
         "version": 1,
     }
 
+    if caller_meta:
+        for key, value in caller_meta.items():
+            if isinstance(value, list):
+                defaults[key] = ", ".join(str(v) for v in value)
+            elif isinstance(value, (str, int, float, bool)):
+                defaults[key] = value
+            else:
+                defaults[key] = str(value)
+
+    defaults["created_at"] = created_at
+    return defaults
+
 
 def _filter_active(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Return only records whose status is not ``archived``.
-
-    Records without a ``status`` metadata field are treated as active
-    for backward compatibility.
-    """
+    """Return only records whose status is not ``archived``."""
     filtered: list[dict[str, Any]] = []
     for r in records:
         if r is None:
@@ -299,17 +310,31 @@ def _filter_active(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
             filtered.append(r)
     return filtered
 
-    if caller_meta:
-        for key, value in caller_meta.items():
-            if isinstance(value, list):
-                # ChromaDB does not support list values — flatten to CSV string
-                defaults[key] = ", ".join(str(v) for v in value)
-            elif isinstance(value, (str, int, float, bool)):
-                defaults[key] = value
-            else:
-                # Coerce anything else to string
-                defaults[key] = str(value)
 
-    # created_at is always overwritten with our server-side timestamp
-    defaults["created_at"] = created_at
-    return defaults
+def _deduplicate_results(
+    records: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Remove duplicate entries by normalized document text."""
+    seen: set[str] = set()
+    result: list[dict[str, Any]] = []
+    for r in records:
+        doc = r.get("document", "").strip().lower()
+        if not doc or doc in seen:
+            continue
+        seen.add(doc)
+        result.append(r)
+    return result
+
+
+def _smart_sort(
+    records: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Sort by: score desc, importance desc, strength desc, updated_at desc."""
+    def sort_key(r: dict[str, Any]) -> tuple[float, float, float, str]:
+        meta = r.get("metadata", {}) or {}
+        score = r.get("score", 0.0)
+        importance = meta.get("importance", 0.0) if isinstance(meta, dict) else 0.0
+        strength = meta.get("memory_strength", 0.0) if isinstance(meta, dict) else 0.0
+        updated = meta.get("updated_at", "") if isinstance(meta, dict) else ""
+        return (-score, -importance, -strength, updated or "")
+    return sorted(records, key=sort_key)

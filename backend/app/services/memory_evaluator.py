@@ -10,8 +10,19 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, ValidationError
 
 from ..services.llm_service import LLMService, LLMServiceError
+from .prompt_builder import PromptBuilder
 
 logger = logging.getLogger(__name__)
+
+# Messages matching these patterns skip LLM evaluation (saves one call per greeting).
+_SKIP_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(r"^(hi|hey|hello|yo|sup|howdy)\W*$", re.IGNORECASE),
+    re.compile(r"^(good )?(morning|afternoon|evening)\W*$", re.IGNORECASE),
+    re.compile(r"^thanks?\W*$", re.IGNORECASE),
+    re.compile(r"^bye|goodbye|see ya|later\W*$", re.IGNORECASE),
+    re.compile(r"^(ok|okay|k|sure|fine|alright)\W*$", re.IGNORECASE),
+    re.compile(r"^(what'?s up|how are you|how'?s it going)\W*$", re.IGNORECASE),
+]
 
 _ALLOWED_CATEGORIES = (
     "Preference",
@@ -28,16 +39,12 @@ _ALLOWED_CATEGORIES = (
 
 
 class MemoryEvaluatorServiceError(RuntimeError):
-    """Raised when the evaluator cannot produce a valid decision."""
-
     def __init__(self, message: str, status_code: int = 500) -> None:
         super().__init__(message)
         self.status_code = status_code
 
 
 class MemoryEvaluation(BaseModel):
-    """Validated evaluator output used to control memory storage."""
-
     store: bool = Field(description="Whether the message should be persisted.")
     importance: float = Field(ge=0.0, le=1.0, description="Importance score from 0 to 1.")
     category: Literal[
@@ -63,12 +70,23 @@ class MemoryEvaluatorService:
         self._logger = logging.getLogger(__name__)
 
     async def evaluate_memory(self, memory_text: str) -> MemoryEvaluation:
-        """Return a structured store/ignore decision for *memory_text*."""
         if not memory_text or not memory_text.strip():
             raise MemoryEvaluatorServiceError("memory_text must not be empty.", status_code=422)
 
-        system_prompt = self._build_system_prompt()
-        user_prompt = self._build_user_prompt(memory_text)
+        text = memory_text.strip()
+
+        # Rule-based fast path: skip LLM for obvious non-memories.
+        if _is_obviously_not_memory(text):
+            self._logger.info("Memory evaluation skipped by rule | text=%r", text)
+            return MemoryEvaluation(
+                store=False,
+                importance=0.0,
+                category="Other",
+                reason="Not stored (greeting/filler detected by rule).",
+            )
+
+        system_prompt = PromptBuilder.memory_evaluation_system()
+        user_prompt = PromptBuilder.memory_evaluation_user(text)
 
         try:
             raw_response = await self._llm.generate_with_context(
@@ -87,30 +105,6 @@ class MemoryEvaluatorService:
             evaluation.reason,
         )
         return evaluation
-
-    @staticmethod
-    def _build_system_prompt() -> str:
-        return (
-            "You are the Aetheris Memory Evaluator. "
-            "Analyze only the latest user message and decide whether it should be stored as permanent memory. "
-            "Return ONLY valid JSON. No markdown, no code fences, no commentary.\n\n"
-            "Required JSON shape:\n"
-            '{"store": true, "importance": 0.93, "category": "Project", "reason": "The user shared a long-term project."}\n\n'
-            "Rules:\n"
-            "- Store long-term goals, user preferences, projects, skills, personal facts, relationships, achievements, important events, and actionable tasks.\n"
-            "- Do not store greetings, small talk, one-off calculations, temporary questions, generic acknowledgements, or filler conversation.\n"
-            "- Use only these categories: Preference, Project, Goal, Skill, Relationship, Fact, Achievement, Event, Task, Other.\n"
-            "- If the message is not worth storing, set store to false, choose category Other, and give a brief reason.\n"
-            "- Importance must be a number from 0 to 1.\n"
-        )
-
-    @staticmethod
-    def _build_user_prompt(memory_text: str) -> str:
-        return (
-            "Latest user message:\n"
-            f"{memory_text.strip()}\n\n"
-            "Respond with only the JSON object."
-        )
 
     def _parse_response(self, raw_response: str) -> MemoryEvaluation:
         candidate = raw_response.strip()
@@ -143,3 +137,12 @@ class MemoryEvaluatorService:
                 f"Memory evaluator returned an invalid decision: {exc}",
                 status_code=500,
             ) from exc
+
+
+def _is_obviously_not_memory(text: str) -> bool:
+    """Return True if the text is almost certainly not worth persisting."""
+    if len(text.split()) <= 3:
+        return True
+    if any(p.search(text) for p in _SKIP_PATTERNS):
+        return True
+    return False
