@@ -28,7 +28,8 @@ _IDENTITY_BLOCK: str = (
 _INTENT_PROMPT: str = (
     'Classify intent. Return {"intent":"<TYPE>","confidence":0.0}'
     ' where TYPE is one of: NORMAL_CHAT, CREATE_MEMORY, UPDATE_MEMORY,'
-    " DELETE_MEMORY, MERGE_MEMORY, SEARCH_MEMORY, WEB_SEARCH, SYSTEM_QUERY,"
+    " DELETE_MEMORY, MERGE_MEMORY, SEARCH_MEMORY, CONVERSATION_QUERY,"
+    " WEB_SEARCH, SYSTEM_QUERY,"
     " MULTI_ACTION, UNKNOWN.\n"
     "If unsure, prefer NORMAL_CHAT."
 )

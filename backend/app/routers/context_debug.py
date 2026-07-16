@@ -4,8 +4,9 @@ import logging
 
 from fastapi import APIRouter, Depends, Query
 
-from ..dependencies import get_context_builder_service, get_llm_service, get_memory_service
+from ..dependencies import get_conversation_memory, get_context_builder_service, get_llm_service, get_memory_service
 from ..services.context_builder import ContextBuilderService
+from ..services.conversation_memory import ConversationMemory
 from ..services.llm_service import LLMService
 from ..services.memory_service import MemoryService
 
@@ -55,12 +56,12 @@ async def debug_filter(
 @router.get("/conversation")
 async def debug_conversation(
     query: str = Query(..., min_length=1, max_length=500),
-    llm_service: LLMService = Depends(get_llm_service),
+    conversation_memory: ConversationMemory = Depends(get_conversation_memory),
 ):
     """Show conversation history with relevance filtering for a given query."""
     from ..services.conversation_context_filter import filter_conversation
 
-    history = llm_service.conversation_history
+    history = conversation_memory.history
     filter_result = filter_conversation(query, history)
 
     return {

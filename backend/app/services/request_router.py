@@ -34,6 +34,7 @@ from .llm_service import (
 from .memory_cache import MemorySearchCache
 from .memory_evaluator import MemoryEvaluatorService
 from .memory_evolution_service import MemoryEvolutionService
+from .memory_hierarchy_service import MemoryHierarchyService
 from .memory_service import MemoryService
 from .metrics_collector import MetricsCollector
 from .prompt_builder import PromptBuilder
@@ -60,6 +61,7 @@ class CognitiveRequestRouter:
         reflection_service: ReflectionService,
         intent_classifier: IntentClassifier,
         immediate_memory_processor: ImmediateMemoryProcessor,
+        memory_hierarchy: MemoryHierarchyService | None = None,
     ) -> None:
         self._llm = llm_service
         self._memory_service = memory_service
@@ -74,6 +76,7 @@ class CognitiveRequestRouter:
         self._prompt_builder = PromptBuilder()
         self._cache = MemorySearchCache()
         self._metrics = MetricsCollector()
+        self._memory_hierarchy = memory_hierarchy
 
     async def route(
         self,
@@ -110,8 +113,12 @@ class CognitiveRequestRouter:
 
         try:
             if classification.primary_intent == IntentType.NORMAL_CHAT:
-                result = await self._handle_normal_chat(message, steps, debug, classification)
-                subsystems = ["ImmediateMemoryProcessor", "MemoryService", "ContextBuilder", "LLM"]
+                result = await self._handle_with_hierarchy(message, steps, debug, classification)
+                subsystems = ["MemoryHierarchy", "ImmediateMemoryProcessor", "LLM"]
+
+            elif classification.primary_intent == IntentType.CONVERSATION_QUERY:
+                result = await self._handle_conversation_query(message, steps, debug)
+                subsystems = ["MemoryHierarchy", "LLM"]
 
             elif classification.primary_intent == IntentType.CREATE_MEMORY:
                 result = await self._handle_create_memory(message, steps, debug)
@@ -131,7 +138,7 @@ class CognitiveRequestRouter:
 
             elif classification.primary_intent == IntentType.SEARCH_MEMORY:
                 result = await self._handle_search_memory(message, steps, debug)
-                subsystems = ["MemoryService", "ContextBuilder", "LLM"]
+                subsystems = ["MemoryHierarchy", "LLM"]
 
             elif classification.primary_intent == IntentType.WEB_SEARCH:
                 result = await self._handle_web_search(message, steps, debug)
@@ -139,15 +146,15 @@ class CognitiveRequestRouter:
 
             elif classification.primary_intent == IntentType.SYSTEM_QUERY:
                 result = await self._handle_system_query(message, steps, debug)
-                subsystems = ["SystemInfo", "LLM"]
+                subsystems = ["MemoryHierarchy", "LLM"]
 
             elif classification.primary_intent == IntentType.MULTI_ACTION:
                 result = await self._handle_multi_action(message, classification, steps, debug)
                 subsystems = classification.metadata.get("subsystems", ["LLM"])
 
             else:
-                result = await self._handle_normal_chat(message, steps, debug, classification)
-                subsystems = ["ImmediateMemoryProcessor", "MemoryService", "ContextBuilder", "LLM"]
+                result = await self._handle_with_hierarchy(message, steps, debug, classification)
+                subsystems = ["MemoryHierarchy", "ImmediateMemoryProcessor", "LLM"]
 
         except Exception as exc:
             logger.exception("Router handler failed | intent=%s", classification.primary_intent)
@@ -761,6 +768,123 @@ class CognitiveRequestRouter:
             memory_success=True,
         )
 
+    async def _handle_with_hierarchy(
+        self,
+        message: str,
+        steps: list[RouteStep],
+        debug: RouterDebugifier,
+        classification: IntentClassification | None = None,
+    ) -> RouterResult:
+        imm_result = await self._run_imm(message, steps)
+        if imm_result.action in (MemoryActionType.CREATE, MemoryActionType.UPDATE, MemoryActionType.MERGE):
+            self._cache.invalidate()
+
+        intent = classification.primary_intent if classification else IntentType.NORMAL_CHAT
+
+        use_hierarchy = self._memory_hierarchy is not None and intent not in (
+            IntentType.CREATE_MEMORY, IntentType.UPDATE_MEMORY,
+            IntentType.DELETE_MEMORY, IntentType.MERGE_MEMORY,
+        )
+
+        if use_hierarchy:
+            hierarchy = await self._resolve_hierarchy(message, intent, steps)
+            memory_context = hierarchy.context_text
+            debug.set_memory_layer(hierarchy.memory_layer)
+            debug.set_conversation_count(len(hierarchy.conversation_messages))
+            debug.set_long_term_count(len(hierarchy.long_term_memories))
+            debug.set_system_count(len(hierarchy.system_memories))
+            debug.set_context_size(len(memory_context))
+        else:
+            memories = await self._retrieve_memories(message, steps)
+            memory_context = self._build_context(memories, steps, query=message)
+
+        injected_count = self._count_injected(memory_context)
+
+        budget = select_budget(
+            message,
+            intent=intent,
+            memory_count=injected_count,
+        )
+
+        if use_hierarchy:
+            response = await self._call_llm_direct(
+                message=message,
+                memory_context=memory_context,
+                steps=steps,
+                max_tokens=budget.max_tokens,
+                temperature=budget.temperature,
+            )
+        else:
+            response = await self._call_llm(
+                message=message,
+                memory_context=memory_context,
+                steps=steps,
+                max_tokens=budget.max_tokens,
+                temperature=budget.temperature,
+            )
+
+        debug.set_memory_action(imm_result.action)
+        debug.set_memory_operation_count(
+            1 if imm_result.action not in (MemoryActionType.SKIP, MemoryActionType.ERROR) else 0,
+        )
+        debug.set_reflection(True)
+
+        return RouterResult(
+            response=response,
+            memory_count=injected_count,
+            memory_action=imm_result.action,
+            memory_success=imm_result.success,
+            memory_error=imm_result.error,
+        )
+
+    async def _handle_conversation_query(
+        self,
+        message: str,
+        steps: list[RouteStep],
+        debug: RouterDebugifier,
+    ) -> RouterResult:
+        hierarchy = await self._resolve_hierarchy(message, IntentType.CONVERSATION_QUERY, steps)
+        memory_context = hierarchy.context_text
+        injected_count = 0
+
+        debug.set_memory_layer(hierarchy.memory_layer)
+        debug.set_conversation_count(len(hierarchy.conversation_messages))
+        debug.set_context_size(len(memory_context))
+
+        budget = select_budget(message, intent=IntentType.CONVERSATION_QUERY)
+        response = await self._call_llm(
+            message=message,
+            memory_context=memory_context,
+            steps=steps,
+            max_tokens=budget.max_tokens,
+            temperature=budget.temperature,
+        )
+
+        return RouterResult(
+            response=response,
+            memory_count=injected_count,
+            memory_action=MemoryActionType.SKIP,
+            memory_success=True,
+        )
+
+    async def _resolve_hierarchy(
+        self,
+        message: str,
+        intent: IntentType,
+        steps: list[RouteStep],
+    ) -> Any:
+        started = perf_counter()
+        hierarchy = await self._memory_hierarchy.resolve(message, intent)
+        elapsed = (perf_counter() - started) * 1000
+        steps.append(RouteStep(
+            subsystem="MemoryHierarchy",
+            action="resolve",
+            duration_ms=elapsed,
+            success=True,
+            detail=f"layer={hierarchy.memory_layer} conv={len(hierarchy.conversation_messages)} lt={len(hierarchy.long_term_memories)} sys={len(hierarchy.system_memories)}",
+        ))
+        return hierarchy
+
     async def _run_imm(
         self,
         message: str,
@@ -960,6 +1084,129 @@ class CognitiveRequestRouter:
             logger.exception("Unexpected LLM error")
             return "An unexpected error occurred while processing your request. Please try again."
 
+    async def _call_llm_direct(
+        self,
+        message: str,
+        memory_context: str,
+        steps: list[RouteStep],
+        system_prompt: str | None = None,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+    ) -> str:
+        started = perf_counter()
+        system = system_prompt or self._prompt_builder.chat_system()
+        content_parts: list[str] = []
+        if memory_context.strip():
+            content_parts.append(memory_context.strip())
+        content_parts.append(f"Current User Message:\n{message.strip()}")
+        prompt = f"{system}\n\n" + "\n\n".join(content_parts)
+        try:
+            response = await self._llm.generate_text(
+                prompt=prompt,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
+            elapsed = (perf_counter() - started) * 1000
+            steps.append(RouteStep(
+                subsystem="LLM",
+                action="generate_direct",
+                duration_ms=elapsed,
+                success=True,
+                detail=f"response_length={len(response)} max_tokens={max_tokens}",
+            ))
+            return response
+        except LLMQuotaExceeded:
+            elapsed = (perf_counter() - started) * 1000
+            steps.append(RouteStep(
+                subsystem="LLM",
+                action="generate_direct",
+                duration_ms=elapsed,
+                success=False,
+                detail="402 Quota Exceeded",
+            ))
+            return "The configured AI model is currently unavailable because the provider account has insufficient credits."
+        except LLMRateLimited:
+            elapsed = (perf_counter() - started) * 1000
+            steps.append(RouteStep(
+                subsystem="LLM",
+                action="generate_direct",
+                duration_ms=elapsed,
+                success=False,
+                detail="429 Rate Limited",
+            ))
+            return "The AI provider is temporarily busy. Please try again in a few seconds."
+        except ProviderUnauthorized:
+            elapsed = (perf_counter() - started) * 1000
+            steps.append(RouteStep(
+                subsystem="LLM",
+                action="generate_direct",
+                duration_ms=elapsed,
+                success=False,
+                detail="401 Unauthorized",
+            ))
+            return "The AI provider returned an authentication error. The API key may be invalid or expired."
+        except ProviderUnavailable:
+            elapsed = (perf_counter() - started) * 1000
+            steps.append(RouteStep(
+                subsystem="LLM",
+                action="generate_direct",
+                duration_ms=elapsed,
+                success=False,
+                detail="503 Unavailable",
+            ))
+            return "The AI provider is temporarily unavailable."
+        except ProviderConnectionError:
+            elapsed = (perf_counter() - started) * 1000
+            steps.append(RouteStep(
+                subsystem="LLM",
+                action="generate_direct",
+                duration_ms=elapsed,
+                success=False,
+                detail="Connection Error",
+            ))
+            return "Unable to connect to the AI provider. Please check your network connection."
+        except ProviderServerError:
+            elapsed = (perf_counter() - started) * 1000
+            steps.append(RouteStep(
+                subsystem="LLM",
+                action="generate_direct",
+                duration_ms=elapsed,
+                success=False,
+                detail="500 Server Error",
+            ))
+            return "The AI provider returned a server error. Please try again."
+        except ProviderTimeout:
+            elapsed = (perf_counter() - started) * 1000
+            steps.append(RouteStep(
+                subsystem="LLM",
+                action="generate_direct",
+                duration_ms=elapsed,
+                success=False,
+                detail="Timeout",
+            ))
+            return "The AI service took too long to respond. Please try again."
+        except LLMServiceError as exc:
+            elapsed = (perf_counter() - started) * 1000
+            steps.append(RouteStep(
+                subsystem="LLM",
+                action="generate_direct",
+                duration_ms=elapsed,
+                success=False,
+                detail=str(exc),
+            ))
+            return f"I encountered an issue while generating a response. Please try again or rephrase your message."
+        except Exception as exc:
+            elapsed = (perf_counter() - started) * 1000
+            steps.append(RouteStep(
+                subsystem="LLM",
+                action="generate_direct",
+                duration_ms=elapsed,
+                success=False,
+                detail=f"Unexpected error: {exc}",
+            ))
+            logger.exception("Unexpected LLM error")
+            return "An unexpected error occurred while processing your request. Please try again."
+
     async def _build_llm_response_with_context(
         self,
         message: str,
@@ -1012,6 +1259,11 @@ class RouterDebugifier:
         self._reflection: bool = False
         self._internet: bool = False
         self._duration: float = 0.0
+        self._memory_layer: str = "none"
+        self._conv_count: int = 0
+        self._lt_count: int = 0
+        self._sys_count: int = 0
+        self._context_size: int = 0
 
     def set_intent(self, classification: IntentClassification) -> None:
         self._intent = classification.primary_intent
@@ -1043,6 +1295,21 @@ class RouterDebugifier:
     def set_internet_used(self, value: bool) -> None:
         self._internet = value
 
+    def set_memory_layer(self, layer: str) -> None:
+        self._memory_layer = layer
+
+    def set_conversation_count(self, count: int) -> None:
+        self._conv_count = count
+
+    def set_long_term_count(self, count: int) -> None:
+        self._lt_count = count
+
+    def set_system_count(self, count: int) -> None:
+        self._sys_count = count
+
+    def set_context_size(self, size: int) -> None:
+        self._context_size = size
+
     def build(self) -> RouterDebugInfo:
         return RouterDebugInfo(
             detected_intent=self._intent,
@@ -1055,4 +1322,9 @@ class RouterDebugifier:
             memory_operation_count=self._memory_op_count,
             reflection_triggered=self._reflection,
             internet_used=self._internet,
+            memory_layer=self._memory_layer,
+            conversation_messages_used=self._conv_count,
+            long_term_memories_used=self._lt_count,
+            system_memories_used=self._sys_count,
+            context_size_chars=self._context_size,
         )

@@ -1,307 +1,315 @@
-# Aetheris – Phase 8.1: Intelligent Conversation Context Filter
+# Aetheris – Phase 9: Hierarchical Memory Architecture
 
 You are a Principal AI Systems Architect.
 
 This is NOT a feature request.
 
-This is a core architectural improvement.
+This is a core architectural redesign of the memory hierarchy.
 
-Do NOT redesign Aetheris.
+Do NOT redesign unrelated systems.
 
-Do NOT modify the Memory Service, Reflection Engine, Provider Manager, or Cognitive Request Router.
+Do NOT modify the LLM provider layer.
 
-Your task is to redesign ONLY the Conversation Context Builder.
+Do NOT remove existing functionality.
+
+Your task is to separate memory into independent layers and ensure the Cognitive Request Router chooses the correct memory source for every query.
 
 ---
 
 # Problem
 
-Aetheris currently sends too much conversation history to the LLM.
+Currently Aetheris treats all memories as one collection.
 
-The LLM therefore mixes unrelated topics into its answers.
+As a result:
 
-Example
+* Old long-term memories leak into simple conversations.
+* Current conversation is confused with historical memories.
+* Personal memories appear in unrelated questions.
+* "What was our previous conversation?" incorrectly searches long-term memory.
+* Simple math questions include unrelated user facts.
 
-Conversation
-
-User:
-Yesterday I swam 100 miles per second.
-
-...
-
-User:
-What is 5 × 6?
-
-Current Response
-
-"30. By the way, I'm still thinking about your swim..."
-
-This is incorrect.
-
-The previous conversation is irrelevant.
+This architecture is incorrect.
 
 ---
 
 # Objective
 
-The Conversation Context Builder must become intelligent.
+Separate memory into three completely independent systems.
 
-It must decide WHICH previous messages are actually useful for answering the current request.
+Each system has a distinct purpose.
 
-Only relevant conversation history may be sent to the LLM.
-
----
-
-# New Pipeline
-
-User Message
-
-↓
-
-Intent Detection
-
-↓
-
-Conversation History
-
-↓
-
-Conversation Relevance Filter
-
-↓
-
-Relevant Messages
-
-↓
-
-Memory Relevance Filter
-
-↓
-
-Relevant Memories
-
-↓
-
-Prompt Builder
-
-↓
-
-LLM
+The router must decide which one to use.
 
 ---
 
-# Create
+# Memory Layer 1 – Short-Term Conversation Memory
 
-backend/app/services/conversation_context_filter.py
+Purpose
 
----
+Store only the current conversation.
 
-# Responsibilities
+Contains
 
-Receive
+* user messages
+* assistant replies
 
-* current user message
-* recent conversation history
+Capacity
 
-Determine
+Configurable
 
-Which previous messages are relevant.
+Default
 
-Discard everything else.
+20 exchanges
 
----
+This memory is temporary.
 
-# Query Classification
+When a new conversation begins,
 
-Classify the incoming request.
-
-Supported categories
-
-GREETING
-
-SMALL_TALK
-
-MATH
-
-GENERAL_KNOWLEDGE
-
-PROGRAMMING
-
-MEMORY_QUERY
-
-PROJECT_DISCUSSION
-
-PERSONAL_INFORMATION
-
-WEB_SEARCH
-
-UNKNOWN
+old conversation history should not automatically be reused.
 
 ---
 
-# Conversation Filtering Rules
+# Short-Term Queries
 
-## Greeting
+Examples
 
-Example
+"What did I ask before?"
 
-Hi
+"What was our previous conversation?"
 
-Hello
+"What was your last answer?"
 
-Hey
+These queries must search ONLY Short-Term Conversation Memory.
 
-Send
-
-Current message only.
-
-No previous conversation.
+Never search ChromaDB.
 
 ---
 
-## Math
+# Memory Layer 2 – Long-Term User Memory
 
-Example
+Purpose
 
-5 + 5
+Store persistent user facts.
 
-100 × 8
+Examples
 
-Square root of 81
+* Name
+* Preferences
+* Favorite Language
+* Current Project
+* Birthday
+* Food Preferences
+* Goals
 
-Do not include
+Storage
 
-* previous stories
-* hobbies
-* memories
-* jokes
-* projects
+ChromaDB
 
-Only send
-
-Current question.
-
----
-
-## General Knowledge
-
-Example
-
-What is the capital of Japan?
-
-Ignore unrelated conversation.
+This memory persists across sessions.
 
 ---
 
-## Programming
+# Long-Term Queries
 
-If discussing the same coding problem,
-
-keep only the recent relevant coding messages.
-
-Discard unrelated chat.
-
----
-
-## Personal Memory
+Examples
 
 "What is my favorite language?"
 
-Only include recent clarification messages if directly related.
+"What project am I am building?"
+
+"What is my name?"
+
+These queries search ONLY Long-Term Memory.
+
+Never use conversation history.
 
 ---
 
-## Project Discussion
+# Memory Layer 3 – System Memory
 
-Keep only conversation related to the same project.
+Purpose
 
-Discard unrelated messages.
+Store information about Aetheris itself.
 
----
+Examples
 
-# Relevance Scoring
+* Assistant identity
+* Capabilities
+* Version
+* Available tools
+* Personality configuration
 
-Every previous message receives a score.
-
-Factors
-
-* semantic similarity
-* topic similarity
-* current intent
-* recency
-* conversation continuity
-
-Score
-
-0.0 → 1.0
-
-Default threshold
-
-0.70
-
-Discard everything below the threshold.
+This memory must never mix with user memories.
 
 ---
 
-# Sliding Window
+# System Queries
 
-Do not blindly send the last N messages.
+Examples
 
-Instead
+"Who are you?"
 
-Select only messages that contribute to the current request.
+"What can you do?"
 
-The window size should be dynamic.
+"What model are you using?"
 
----
+These queries use ONLY System Memory.
 
-# Context Reset
-
-Automatically start a fresh context when the topic changes significantly.
-
-Example
-
-Yesterday
-
-Discussed food.
-
-Today
-
-Asked a math question.
-
-Expected
-
-Do not include yesterday's food discussion.
+Never retrieve user memories.
 
 ---
 
-# Token Optimization
+# Cognitive Request Router
 
-Reduce conversation history by at least 70%.
+Update routing.
 
-Only transmit useful context.
+Examples
+
+User
+
+"What was our previous conversation?"
+
+↓
+
+Conversation Memory
 
 ---
 
-# Prompt Builder
+User
 
-The Prompt Builder must receive only:
+"What is my favorite language?"
 
-System Prompt
+↓
 
-*
+Long-Term Memory
 
-Filtered Conversation
+---
 
-*
+User
 
-Filtered Memories
+"Who are you?"
 
-*
+↓
+
+System Memory
+
+---
+
+User
+
+"What project am I am building?"
+
+↓
+
+Long-Term Memory
+
+---
+
+User
+
+"What did you answer two messages ago?"
+
+↓
+
+Conversation Memory
+
+---
+
+# Context Builder
+
+Build prompts from only the required memory layer.
+
+Do NOT combine all memory sources.
+
+Only merge layers when explicitly required.
+
+---
+
+# Conversation Reset
+
+Implement conversation sessions.
+
+Each session has:
+
+Session ID
+
+Created Time
+
+Last Activity
+
+Conversation History
+
+When a new session starts,
+
+Conversation Memory begins empty.
+
+Long-Term Memory remains unchanged.
+
+---
+
+# Memory Isolation
+
+Conversation Memory
+
+must never be embedded into ChromaDB.
+
+Long-Term Memory
+
+must never automatically appear in unrelated chats.
+
+System Memory
+
+must never be editable by normal user memory commands.
+
+---
+
+# Retrieval Rules
+
+Math
+
+No memories.
+
+Greeting
+
+No memories.
+
+Programming
+
+Relevant conversation only.
+
+Memory Query
+
+Long-Term Memory only.
+
+Conversation Query
+
+Conversation Memory only.
+
+System Query
+
+System Memory only.
+
+---
+
+# Context Priority
+
+Highest
 
 Current User Message
 
-Nothing else.
+↓
+
+Conversation Memory
+
+↓
+
+Relevant Long-Term Memory
+
+↓
+
+System Memory
+
+Only include layers required for the request.
 
 ---
 
@@ -309,37 +317,39 @@ Nothing else.
 
 Log
 
-Query Type
+Selected Memory Layer
 
-Conversation Messages Received
+Conversation Messages Used
 
-Messages Removed
+Long-Term Memories Used
 
-Messages Retained
+System Memories Used
 
 Filtering Time
 
-Final Prompt Size
+Context Size
 
 ---
 
 # Dashboard
 
-Create
+Expose
 
-GET /api/context/conversation
+GET /api/debug/memory-hierarchy
 
-Return
+Display
 
-Original History
+Conversation Memory
 
-Filtered History
+Long-Term Memory
 
-Discarded Messages
+System Memory
 
-Reason for Removal
+Current Session
 
-Final Prompt Size
+Context Used
+
+Memory Source Selected
 
 ---
 
@@ -351,90 +361,93 @@ Conversation
 
 User
 
-"I like pizza."
+5 + 5
 
-Later
+Then
 
-"What is 5 × 6?"
+"What was our previous conversation?"
 
 Expected
 
-Conversation history removed.
-
-Response
-
-30
+Return only the current chat.
 
 ---
 
 Scenario 2
 
-Conversation
-
-"My favorite language is Python."
-
-Later
+User
 
 "What is my favorite language?"
 
 Expected
 
-Relevant conversation retained.
+Search only Long-Term Memory.
 
 ---
 
 Scenario 3
 
-Programming Session
+User
 
-10 coding messages.
-
-Continue debugging.
+"Who are you?"
 
 Expected
 
-Relevant coding history preserved.
+Use only System Memory.
 
 ---
 
 Scenario 4
 
-Topic Change
+User
 
-Discussed movies.
-
-Later
-
-Explain binary search.
+"What is 8 × 9?"
 
 Expected
 
-Movie discussion removed.
+No memory retrieval.
+
+Simple mathematical response.
+
+---
+
+Scenario 5
+
+User
+
+"What project am I building?"
+
+Expected
+
+Retrieve only project-related Long-Term Memory.
 
 ---
 
 # Performance
 
-Filtering time
+Conversation Memory lookup
 
 Target
 
+<5 ms
+
+Long-Term Retrieval
+
+<50 ms
+
+Total Context Building
+
 <20 ms
-
-Reduce average conversation tokens by at least 70%.
-
-Improve response relevance.
 
 ---
 
 # Deliverables
 
-1. Implement an Intelligent Conversation Context Filter.
-2. Prevent unrelated conversation history from reaching the LLM.
-3. Dynamically detect topic changes.
-4. Filter conversation history using semantic relevance.
-5. Reduce prompt size and token usage.
-6. Preserve complete backward compatibility.
-7. Ensure Aetheris answers only the current question unless previous conversation is genuinely required.
+1. Separate memory into Conversation Memory, Long-Term User Memory, and System Memory.
+2. Update the Cognitive Request Router to choose the correct memory layer automatically.
+3. Prevent unrelated memories from leaking into responses.
+4. Ensure "previous conversation" queries search only the active conversation session.
+5. Preserve backward compatibility with the existing Memory Service.
+6. Produce a memory hierarchy diagram and document the routing logic for each query type.
 
-The final result should make Aetheris context-aware rather than conversation-heavy. It should remember the past without allowing unrelated history to pollute current responses, producing focused, accurate, and natural answers.
+The final result should make Aetheris behave like a true cognitive system with clearly separated short-term memory, long-term memory, and self-identity, eliminating context pollution and improving response accuracy.

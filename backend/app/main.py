@@ -18,6 +18,7 @@ from .routers.chat import router as chat_router
 from .routers.context_debug import router as context_debug_router
 from .routers.health import router as health_router
 from .routers.memory import router as memory_router
+from .routers.memory_hierarchy_debug import router as memory_hierarchy_debug_router
 from .routers.memory_evolution import router as memory_evolution_router
 from .routers.reflection import router as reflection_router
 from .routers.system import router as system_router
@@ -102,6 +103,7 @@ def create_app() -> FastAPI:
     application.include_router(health_router, prefix=settings.api_v1_prefix)
     application.include_router(chat_router)
     application.include_router(context_debug_router)
+    application.include_router(memory_hierarchy_debug_router)
     application.include_router(memory_router)
     application.include_router(memory_evolution_router)
     application.include_router(reflection_router)

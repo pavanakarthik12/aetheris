@@ -36,6 +36,18 @@ _SEARCH_PATTERNS: list[re.Pattern[str]] = [
         re.IGNORECASE,
     ),
 ]
+_CONVERSATION_QUERY_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(
+        r"\b(previous conversation|last (message|response|answer|chat|conversation|exchange)|"
+        r"what did (i|we) (just )?(say|talk|ask|discuss)|"
+        r"what was (my|our) (last|previous) (question|message|conversation)|"
+        r"what did you (say|respond|answer) (last|before|earlier)|"
+        r"what (was|were) we (talking|discussing|chatting) about|"
+        r"two messages ago|(earlier|before) in the conversation|"
+        r"what (did )?i ask (you )?(before|earlier|last time))\b",
+        re.IGNORECASE,
+    ),
+]
 _WEB_SEARCH_PATTERNS: list[re.Pattern[str]] = [
     re.compile(
         r"\b(search (the )?(web|internet|online)|"
@@ -132,6 +144,13 @@ class RuleIntentClassifier(BaseIntentClassifier):
             return IntentClassification(
                 primary_intent=IntentType.MERGE_MEMORY,
                 confidence=0.7,
+                classifier_source="rule",
+            )
+
+        if any(p.search(message) for p in _CONVERSATION_QUERY_PATTERNS):
+            return IntentClassification(
+                primary_intent=IntentType.CONVERSATION_QUERY,
+                confidence=0.85,
                 classifier_source="rule",
             )
 

@@ -142,6 +142,38 @@ def get_intent_classifier(
     return IntentClassifier(llm_service=llm_service)
 
 
+def get_conversation_memory() -> "ConversationMemory":
+    """Provide the shared in-memory conversation store."""
+
+    from .services.conversation_memory import ConversationMemory
+
+    return ConversationMemory()
+
+
+def get_system_memory() -> "SystemMemory":
+    """Provide the shared system memory store."""
+
+    from .services.system_memory import SystemMemory
+
+    return SystemMemory()
+
+
+def get_memory_hierarchy_service(
+    conversation_memory: "ConversationMemory" = Depends(get_conversation_memory),
+    memory_service: "MemoryService" = Depends(get_memory_service),
+    system_memory: "SystemMemory" = Depends(get_system_memory),
+) -> "MemoryHierarchyService":
+    """Provide the shared MemoryHierarchyService."""
+
+    from .services.memory_hierarchy_service import MemoryHierarchyService
+
+    return MemoryHierarchyService(
+        conversation_memory=conversation_memory,
+        long_term_memory=memory_service,
+        system_memory=system_memory,
+    )
+
+
 def get_request_router(
     llm_service: "LLMService" = Depends(get_llm_service),
     memory_service: "MemoryService" = Depends(get_memory_service),
@@ -153,6 +185,7 @@ def get_request_router(
     reflection_service: "ReflectionService" = Depends(get_reflection_service),
     intent_classifier: "IntentClassifier" = Depends(get_intent_classifier),
     immediate_memory_processor: "ImmediateMemoryProcessor" = Depends(get_immediate_memory_processor),
+    memory_hierarchy: "MemoryHierarchyService" = Depends(get_memory_hierarchy_service),
 ) -> "CognitiveRequestRouter":
     """Provide the CognitiveRequestRouter wired to all subsystems."""
 
@@ -169,4 +202,5 @@ def get_request_router(
         reflection_service=reflection_service,
         intent_classifier=intent_classifier,
         immediate_memory_processor=immediate_memory_processor,
+        memory_hierarchy=memory_hierarchy,
     )

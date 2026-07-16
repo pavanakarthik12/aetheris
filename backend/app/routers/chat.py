@@ -32,11 +32,13 @@ import logging
 from fastapi import APIRouter, BackgroundTasks, Depends
 
 from ..dependencies import (
+    get_conversation_memory,
     get_llm_service,
     get_request_router,
     get_reflection_service,
 )
 from ..schemas.chat import ChatRequest, ChatResponse, MemoryActionType
+from ..services.conversation_memory import ConversationMemory
 from ..services.llm_service import LLMService
 from ..services.reflection_service import ReflectionService
 from ..services.request_router import CognitiveRequestRouter
@@ -52,6 +54,7 @@ async def chat(
     router_service: CognitiveRequestRouter = Depends(get_request_router),
     reflection_service: ReflectionService = Depends(get_reflection_service),
     llm_service: LLMService = Depends(get_llm_service),
+    conversation_memory: ConversationMemory = Depends(get_conversation_memory),
 ) -> ChatResponse:
     logger.info(
         "Chat request received | message_length=%d", len(request.message),
@@ -67,7 +70,7 @@ async def chat(
     # ------------------------------------------------------------------
     # Step 4b — Store conversation exchange
     # ------------------------------------------------------------------
-    llm_service.store_exchange(request.message, router_result.response)
+    conversation_memory.add_exchange(request.message, router_result.response)
 
     # ------------------------------------------------------------------
     # Step 5 — Background Reflection (analysis + strengthen only)

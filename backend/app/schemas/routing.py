@@ -19,6 +19,7 @@ class IntentType(str, Enum):
     DELETE_MEMORY = "DELETE_MEMORY"
     MERGE_MEMORY = "MERGE_MEMORY"
     SEARCH_MEMORY = "SEARCH_MEMORY"
+    CONVERSATION_QUERY = "CONVERSATION_QUERY"
     WEB_SEARCH = "WEB_SEARCH"
     SYSTEM_QUERY = "SYSTEM_QUERY"
     MULTI_ACTION = "MULTI_ACTION"
@@ -72,6 +73,13 @@ class RouterDebugInfo(BaseModel):
     memory_operation_count: int = Field(default=0, description="Number of memory operations.")
     reflection_triggered: bool = Field(default=False, description="Whether reflection was scheduled.")
     internet_used: bool = Field(default=False, description="Whether web search was invoked.")
+    memory_layer: str = Field(
+        default="none", description="Memory layer selected (conversation / long_term / system / none).",
+    )
+    conversation_messages_used: int = Field(default=0, description="Number of conversation messages used.")
+    long_term_memories_used: int = Field(default=0, description="Number of long-term memories used.")
+    system_memories_used: int = Field(default=0, description="Number of system memories used.")
+    context_size_chars: int = Field(default=0, description="Total context size in characters.")
 
 
 class RouterResult(BaseModel):
