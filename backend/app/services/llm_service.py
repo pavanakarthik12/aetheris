@@ -5,16 +5,15 @@ from typing import Any
 
 from ..config.settings import Settings, get_settings
 from .circuit_breaker import CircuitBreaker
+from .conversation_context_filter import filter_conversation
+from .prompt_builder import PromptBuilder
 from .exceptions import (
     LLMServiceError,
     LLMQuotaExceeded,
     LLMRateLimited,
     ProviderBadRequest,
-    ProviderConflict,
     ProviderConnectionError,
-    ProviderForbidden,
     ProviderMalformedResponse,
-    ProviderNotFound,
     ProviderServerError,
     ProviderTimeout,
     ProviderUnauthorized,
@@ -22,7 +21,6 @@ from .exceptions import (
 )
 from .provider_health import ProviderHealthMonitor
 from .providers.groq_provider import GroqProvider
-from .providers.openrouter_provider import OpenRouterProvider
 from .providers.provider_interface import LLMProvider
 from .providers.provider_manager import ProviderManager
 
@@ -31,44 +29,35 @@ class LLMService:
     _DEFAULT_MAX_TOKENS: int = 512
     _DEFAULT_TEMPERATURE: float = 0.7
 
+    _MAX_CONVERSATION_TURNS: int = 50
+
     def __init__(self, settings: Settings | None = None) -> None:
         self._settings = settings or get_settings()
         self._logger = logging.getLogger(__name__)
         self._manager: ProviderManager | None = None
+        self._conversation_history: list[dict[str, Any]] = []
         self._validate_providers()
 
     def _validate_providers(self) -> None:
         errors: list[str] = []
 
-        if not self._settings.openrouter_api_key:
-            errors.append("OPENROUTER_API_KEY is not configured")
-
-        if not self._settings.groq_api_key:
-            errors.append("GROQ_API_KEY is not configured")
-
-        if not self._settings.openrouter_base_url.startswith("http"):
-            errors.append(f"OPENROUTER_BASE_URL is invalid: {self._settings.openrouter_base_url}")
-
-        if not self._settings.groq_base_url.startswith("http"):
-            errors.append(f"GROQ_BASE_URL is invalid: {self._settings.groq_base_url}")
-
-        if not self._settings.openrouter_model:
-            errors.append("OPENROUTER_MODEL is not configured")
-
-        if not self._settings.groq_model:
-            errors.append("GROQ_MODEL is not configured")
+        provider = self._settings.llm_provider
+        if provider == "groq":
+            if not self._settings.groq_api_key:
+                errors.append("GROQ_API_KEY is not configured")
+            if not self._settings.groq_base_url.startswith("http"):
+                errors.append(f"GROQ_BASE_URL is invalid: {self._settings.groq_base_url}")
+            if not self._settings.groq_model:
+                errors.append("GROQ_MODEL is not configured")
 
         if errors:
             for err in errors:
                 self._logger.warning("Provider config warning: %s", err)
 
         self._logger.info(
-            "Providers loaded | primary=%s (%s) | secondary=%s (%s) | failover=%s | circuit_breaker=%s",
-            self._settings.primary_provider,
-            self._settings.openrouter_model,
-            self._settings.secondary_provider,
+            "Provider loaded | provider=%s | model=%s | circuit_breaker=%s",
+            self._settings.llm_provider,
             self._settings.groq_model,
-            self._settings.enable_provider_failover,
             self._settings.enable_circuit_breaker,
         )
 
@@ -76,37 +65,16 @@ class LLMService:
         if self._manager is not None:
             return self._manager
 
-        providers: list[LLMProvider] = []
-
-        primary_name = self._settings.primary_provider.lower()
-        secondary_name = self._settings.secondary_provider.lower()
-
-        if primary_name == "openrouter":
-            providers.append(OpenRouterProvider(
-                api_key=self._settings.openrouter_api_key,
-                base_url=self._settings.openrouter_base_url,
-                model=self._settings.openrouter_model,
-                timeout=self._settings.llm_timeout,
-            ))
-        else:
-            providers.append(OpenRouterProvider(
-                api_key=self._settings.qwen_api_key,
-                base_url=self._settings.qwen_base_url,
-                model=self._settings.llm_model,
-                timeout=self._settings.llm_timeout,
-            ))
-
-        if secondary_name == "groq":
-            providers.append(GroqProvider(
-                api_key=self._settings.groq_api_key,
-                base_url=self._settings.groq_base_url,
-                model=self._settings.groq_model,
-                timeout=self._settings.llm_timeout,
-            ))
+        providers: list[LLMProvider] = [GroqProvider(
+            api_key=self._settings.groq_api_key,
+            base_url=self._settings.groq_base_url,
+            model=self._settings.groq_model,
+            timeout=self._settings.llm_timeout,
+        )]
 
         self._manager = ProviderManager(
             providers=providers,
-            enable_failover=self._settings.enable_provider_failover,
+            enable_failover=False,
             enable_circuit_breaker=self._settings.enable_circuit_breaker,
         )
         return self._manager
@@ -125,11 +93,11 @@ class LLMService:
 
     @property
     def api_key(self) -> str:
-        return self._settings.qwen_api_key
+        return self._settings.groq_api_key
 
     @property
     def base_url(self) -> str:
-        return self._settings.qwen_base_url.rstrip("/")
+        return self._settings.groq_base_url.rstrip("/")
 
     @property
     def circuit_breaker(self) -> CircuitBreaker:
@@ -142,6 +110,45 @@ class LLMService:
     @property
     def provider_manager(self) -> ProviderManager:
         return self._provider_manager
+
+    # ------------------------------------------------------------------
+    # Conversation history management
+    # ------------------------------------------------------------------
+
+    @property
+    def conversation_history(self) -> list[dict[str, Any]]:
+        return list(self._conversation_history)
+
+    def store_exchange(self, user_message: str, assistant_response: str) -> None:
+        self._conversation_history.append({
+            "role": "user",
+            "content": user_message.strip(),
+        })
+        self._conversation_history.append({
+            "role": "assistant",
+            "content": assistant_response.strip(),
+        })
+        if len(self._conversation_history) > self._MAX_CONVERSATION_TURNS * 2:
+            self._conversation_history = self._conversation_history[-(self._MAX_CONVERSATION_TURNS * 2):]
+
+    def clear_conversation(self) -> None:
+        self._conversation_history.clear()
+
+    def get_filtered_conversation(self, query: str) -> list[dict[str, Any]]:
+        if not self._conversation_history:
+            return []
+        result = filter_conversation(query, self._conversation_history)
+        self._logger.info(
+            "Conversation filter | query_type=%s | before=%d | after=%d | discarded=%d | %.2fms",
+            result.query_type.value,
+            result.total_before,
+            result.total_after,
+            len(result.discarded),
+            result.execution_time_ms,
+        )
+        return result.filtered_history
+
+    # ------------------------------------------------------------------
 
     async def aclose(self) -> None:
         pass
@@ -170,19 +177,28 @@ class LLMService:
             {"role": "system", "content": system_prompt},
         ]
 
-        if memory_context.strip():
-            user_turn = (
-                f"{memory_context.strip()}\n\n"
-                f"Current User Message:\n{user_message.strip()}"
-            )
-        else:
-            user_turn = user_message.strip()
+        # Section order: User Facts → Conversation → Current Message
+        content_parts: list[str] = []
 
+        if memory_context.strip():
+            content_parts.append(memory_context.strip())
+
+        filtered_conv = self.get_filtered_conversation(user_message)
+        if filtered_conv:
+            conv_block = PromptBuilder.conversation_block(filtered_conv)
+            if conv_block:
+                content_parts.append(conv_block)
+
+        content_parts.append(f"Current User Message:\n{user_message.strip()}")
+
+        user_turn = "\n\n".join(content_parts)
         messages.append({"role": "user", "content": user_turn})
 
         self._logger.info(
-            "generate_with_context | memory_present=%s | user_length=%d",
+            "generate_with_context | memory_present=%s | conv_turns=%d | total_messages=%d | user_length=%d",
             bool(memory_context.strip()),
+            len(filtered_conv),
+            len(messages),
             len(user_message),
         )
 

@@ -35,8 +35,12 @@ class FakeEmbeddingService:
             return [0.0, 1.0, 0.0]
         if any(token in normalized for token in ("coffee", "espresso", "latte")):
             return [0.0, 0.0, 1.0]
-        if any(token in normalized for token in ("aetheris", "project", "kubernetes", "interview", "java")):
+        if any(token in normalized for token in ("aetheris", "project", "interview")):
             return [0.8, 0.1, 0.1]
+        if any(token in normalized for token in ("java", "favorite")):
+            return [0.1, 0.8, 0.1]
+        if any(token in normalized for token in ("kubernetes", "learning")):
+            return [0.1, 0.1, 0.8]
 
         return [0.33, 0.33, 0.34]
 
@@ -153,13 +157,29 @@ def _cosine_similarity(left: list[float], right: list[float]) -> float:
 class FakeLLMService:
     """Return deterministic JSON decisions for the evaluator and dummy chat output."""
 
+    def __init__(self) -> None:
+        self._conversation_history: list[dict[str, Any]] = []
+
+    @property
+    def conversation_history(self) -> list[dict[str, Any]]:
+        return list(self._conversation_history)
+
+    def store_exchange(self, user_message: str, assistant_response: str) -> None:
+        self._conversation_history.append({"role": "user", "content": user_message})
+        self._conversation_history.append({"role": "assistant", "content": assistant_response})
+
+    def clear_conversation(self) -> None:
+        self._conversation_history.clear()
+
     async def generate_with_context(
         self,
         user_message: str,
         system_prompt: str,
         memory_context: str = "",
+        max_tokens: int | None = None,
+        temperature: float | None = None,
     ) -> str:
-        if "Memory Evaluator" in system_prompt:
+        if "Decide if this message should be a permanent memory" in system_prompt:
             latest_message = self._extract_latest_message(user_message)
             lowered = latest_message.lower()
 
@@ -244,6 +264,9 @@ class FakeLLMService:
 
         return "ok"
 
+    async def generate_text(self, prompt: str, max_tokens: int | None = None, temperature: float | None = None) -> str:
+        return "ok"
+
     @staticmethod
     def _extract_latest_message(prompt: str) -> str:
         marker = "Latest user message:\n"
@@ -284,7 +307,7 @@ class MemoryPhase5Tests(unittest.TestCase):
 
     def test_chat_stores_worthy_memories(self) -> None:
         messages = [
-            "I'm building Aetheris.",
+            "I'm building Aetheris for fun.",
             "My favorite language is Java.",
             "My goal is to become an AI Engineer.",
             "I started learning Kubernetes.",

@@ -24,6 +24,7 @@ from .chroma_service import ChromaService
 from .embedding_service import EmbeddingService
 from .memory_evaluator import MemoryEvaluation, MemoryEvaluatorService, MemoryEvaluatorServiceError
 from .memory_evolution_service import MemoryEvolutionService, MemoryEvolutionServiceError
+from .memory_normalizer import normalize_to_third_person
 from .memory_service import MemoryService
 
 logger = logging.getLogger(__name__)
@@ -147,15 +148,34 @@ class ImmediateMemoryProcessor:
             )
 
         # --------------------------------------------------------------
-        # 4. Decide evolution action
+        # 4. Build third-person storage text and metadata
         # --------------------------------------------------------------
+        storage_text = evaluation.memory_fact.strip()
+        if not storage_text:
+            storage_text = normalize_to_third_person(
+                message_text, category=evaluation.category,
+            )
+
         base_metadata: dict[str, Any] = {
             "source": "chat",
             "category": evaluation.category,
             "importance": evaluation.importance,
             "reason": evaluation.reason,
+            "original_text": message_text.strip(),
+            "memory_fact": storage_text,
         }
 
+        if evaluation.attribute and evaluation.value:
+            base_metadata["fact"] = {
+                "category": evaluation.category.lower() if evaluation.category else "",
+                "attribute": evaluation.attribute,
+                "value": evaluation.value,
+                "memory_fact": storage_text,
+            }
+
+        # --------------------------------------------------------------
+        # 5. Decide evolution action (uses original message for search)
+        # --------------------------------------------------------------
         try:
             decision = await self._memory_evolution.decide_evolution(
                 memory_text=message_text,
@@ -176,17 +196,20 @@ class ImmediateMemoryProcessor:
             )
 
         # --------------------------------------------------------------
-        # 5. Execute the chosen action
+        # 6. Execute the chosen action (uses normalized text for storage)
         # --------------------------------------------------------------
         action = decision.get("action", "SKIP")
 
         try:
             if action == "CREATE":
                 result = await self._memory_evolution.create_memory(
-                    memory_text=message_text,
+                    memory_text=storage_text,
                     metadata=base_metadata,
                 )
-                logger.info("Memory CREATED via immediate processor | id=%s", result["memory_id"])
+                logger.info(
+                    "Memory CREATED via immediate processor | id=%s | fact=%.60r",
+                    result["memory_id"], storage_text,
+                )
                 return ImmediateMemoryResult(
                     action=MemoryActionType.CREATE,
                     success=True,
@@ -205,7 +228,7 @@ class ImmediateMemoryProcessor:
                     )
                 result = await self._memory_evolution.update_memory(
                     memory_id=target_id,
-                    new_text=message_text,
+                    new_text=storage_text,
                     new_metadata=base_metadata,
                 )
                 logger.info("Memory UPDATED via immediate processor | id=%s", result["memory_id"])
@@ -226,7 +249,7 @@ class ImmediateMemoryProcessor:
                         error="MERGE decision missing target_id",
                     )
                 existing_text = await self._memory_evolution.get_memory_document(target_id) or ""
-                merged_text = f"{existing_text}\n{message_text}"
+                merged_text = f"{existing_text}\n{storage_text}"
                 result = await self._memory_evolution.update_memory(
                     memory_id=target_id,
                     new_text=merged_text,

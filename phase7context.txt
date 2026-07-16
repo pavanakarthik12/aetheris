@@ -1,65 +1,76 @@
-# Aetheris – Phase 8: Intelligent Context Builder & Memory Relevance Filtering
+# Aetheris – Phase 8.1: Intelligent Conversation Context Filter
 
 You are a Principal AI Systems Architect.
+
+This is NOT a feature request.
 
 This is a core architectural improvement.
 
 Do NOT redesign Aetheris.
 
-Do NOT modify the Memory Service, Reflection Engine, Cognitive Request Router, or Provider Manager.
+Do NOT modify the Memory Service, Reflection Engine, Provider Manager, or Cognitive Request Router.
 
-Your task is to redesign ONLY the Context Builder so that it injects **only relevant memories** into the LLM prompt.
+Your task is to redesign ONLY the Conversation Context Builder.
 
 ---
 
 # Problem
 
-The current Context Builder blindly sends retrieved memories to the LLM.
+Aetheris currently sends too much conversation history to the LLM.
 
-This causes unrelated memories to appear in responses.
+The LLM therefore mixes unrelated topics into its answers.
 
 Example
 
-User
+Conversation
 
-"What is 5 + 5?"
+User:
+Yesterday I swam 100 miles per second.
 
-Retrieved Memories
+...
 
-* Building Aetheris
-* Favorite Language = Python
-* Likes Pizza
-* Swimming
+User:
+What is 5 × 6?
 
 Current Response
 
-The LLM unnecessarily talks about Aetheris, Python, pizza, and swimming.
+"30. By the way, I'm still thinking about your swim..."
 
 This is incorrect.
+
+The previous conversation is irrelevant.
 
 ---
 
 # Objective
 
-The Context Builder must become intelligent.
+The Conversation Context Builder must become intelligent.
 
-It must determine whether each retrieved memory is relevant to the current user request.
+It must decide WHICH previous messages are actually useful for answering the current request.
 
-Only relevant memories may be included in the final prompt.
+Only relevant conversation history may be sent to the LLM.
 
 ---
 
-# New Context Pipeline
+# New Pipeline
 
 User Message
 
 ↓
 
-Memory Search
+Intent Detection
 
 ↓
 
-Top K Results
+Conversation History
+
+↓
+
+Conversation Relevance Filter
+
+↓
+
+Relevant Messages
 
 ↓
 
@@ -67,11 +78,11 @@ Memory Relevance Filter
 
 ↓
 
-Remove Irrelevant Memories
+Relevant Memories
 
 ↓
 
-Context Builder
+Prompt Builder
 
 ↓
 
@@ -79,76 +90,48 @@ LLM
 
 ---
 
-# Memory Relevance Filter
+# Create
 
-Create:
-
-backend/app/services/memory_relevance_filter.py
-
-Responsibilities:
-
-* Receive user message
-* Receive retrieved memories
-* Score each memory for relevance
-* Remove irrelevant memories
-* Return only useful memories
+backend/app/services/conversation_context_filter.py
 
 ---
 
-# Relevance Scoring
+# Responsibilities
 
-Each memory receives a relevance score.
+Receive
 
-Factors:
+* current user message
+* recent conversation history
 
-* Semantic similarity
-* Intent match
-* Memory category
-* Recency
-* Memory strength
-* User request type
+Determine
 
-Final score:
+Which previous messages are relevant.
 
-0.0 → 1.0
-
----
-
-# Threshold
-
-Default relevance threshold
-
-0.65
-
-If relevance < threshold
-
-Discard the memory.
-
-Do not include it in the prompt.
+Discard everything else.
 
 ---
 
 # Query Classification
 
-Before building context, classify the query.
+Classify the incoming request.
 
-Supported types:
+Supported categories
+
+GREETING
+
+SMALL_TALK
 
 MATH
 
 GENERAL_KNOWLEDGE
 
-MEMORY_QUERY
+PROGRAMMING
 
-PERSONAL_INFORMATION
+MEMORY_QUERY
 
 PROJECT_DISCUSSION
 
-PROGRAMMING
-
-CASUAL_CHAT
-
-GREETING
+PERSONAL_INFORMATION
 
 WEB_SEARCH
 
@@ -156,39 +139,67 @@ UNKNOWN
 
 ---
 
-# Context Rules
+# Conversation Filtering Rules
+
+## Greeting
+
+Example
+
+Hi
+
+Hello
+
+Hey
+
+Send
+
+Current message only.
+
+No previous conversation.
+
+---
 
 ## Math
 
 Example
 
-"What is 5 + 5?"
+5 + 5
 
-Inject:
+100 × 8
 
-No memories.
+Square root of 81
+
+Do not include
+
+* previous stories
+* hobbies
+* memories
+* jokes
+* projects
+
+Only send
+
+Current question.
 
 ---
 
-## Greeting
+## General Knowledge
 
-"Hi"
+Example
 
-Inject:
+What is the capital of Japan?
 
-No memories.
+Ignore unrelated conversation.
 
 ---
 
 ## Programming
 
-"Explain recursion."
+If discussing the same coding problem,
 
-Inject:
+keep only the recent relevant coding messages.
 
-Programming preferences only if relevant.
-
-Ignore food, hobbies, names, etc.
+Discard unrelated chat.
 
 ---
 
@@ -196,116 +207,139 @@ Ignore food, hobbies, names, etc.
 
 "What is my favorite language?"
 
-Inject:
-
-Favorite language memory only.
+Only include recent clarification messages if directly related.
 
 ---
 
-## Project
+## Project Discussion
 
-"What project am I building?"
+Keep only conversation related to the same project.
 
-Inject:
-
-Project memories only.
+Discard unrelated messages.
 
 ---
 
-## Food
+# Relevance Scoring
 
-"What food do I like?"
+Every previous message receives a score.
 
-Inject:
+Factors
 
-Food memories only.
+* semantic similarity
+* topic similarity
+* current intent
+* recency
+* conversation continuity
+
+Score
+
+0.0 → 1.0
+
+Default threshold
+
+0.70
+
+Discard everything below the threshold.
 
 ---
 
-# Context Size
+# Sliding Window
 
-Maximum memories:
+Do not blindly send the last N messages.
 
-5
+Instead
 
-Recommended:
+Select only messages that contribute to the current request.
 
-3
-
-Never send unrelated memories simply because they were retrieved.
+The window size should be dynamic.
 
 ---
 
-# Empty Context
+# Context Reset
 
-If no relevant memories exist
+Automatically start a fresh context when the topic changes significantly.
 
-Do NOT force context.
+Example
 
-Simply call the LLM with:
+Yesterday
+
+Discussed food.
+
+Today
+
+Asked a math question.
+
+Expected
+
+Do not include yesterday's food discussion.
+
+---
+
+# Token Optimization
+
+Reduce conversation history by at least 70%.
+
+Only transmit useful context.
+
+---
+
+# Prompt Builder
+
+The Prompt Builder must receive only:
 
 System Prompt
 
 *
 
-User Message
+Filtered Conversation
 
----
+*
 
-# Prompt Optimization
+Filtered Memories
 
-Never include:
+*
 
-* Archived memories
-* Duplicate memories
-* Historical values
-* Reflection history
-* Internal metadata
-* Memory IDs
+Current User Message
 
-Only inject concise, user-facing memory facts.
+Nothing else.
 
 ---
 
 # Logging
 
-Log:
+Log
 
 Query Type
 
-Retrieved Memories
+Conversation Messages Received
 
-Relevant Memories
+Messages Removed
 
-Discarded Memories
-
-Relevance Score
-
-Context Size
+Messages Retained
 
 Filtering Time
+
+Final Prompt Size
 
 ---
 
 # Dashboard
 
-Expose:
+Create
 
-GET /api/context/debug
+GET /api/context/conversation
 
-Return:
+Return
 
-Query
+Original History
 
-Retrieved Memories
+Filtered History
 
-Discarded Memories
+Discarded Messages
 
-Final Context
+Reason for Removal
 
-Relevance Scores
-
-Execution Time
+Final Prompt Size
 
 ---
 
@@ -313,90 +347,94 @@ Execution Time
 
 Scenario 1
 
+Conversation
+
 User
 
-"What is 5 + 5?"
+"I like pizza."
+
+Later
+
+"What is 5 × 6?"
 
 Expected
 
-No memories injected.
+Conversation history removed.
 
 Response
 
-10
+30
 
 ---
 
 Scenario 2
 
-User
+Conversation
 
-"What project am I building?"
+"My favorite language is Python."
+
+Later
+
+"What is my favorite language?"
 
 Expected
 
-Only project memories injected.
+Relevant conversation retained.
 
 ---
 
 Scenario 3
 
-User
+Programming Session
 
-"What is my favorite programming language?"
+10 coding messages.
+
+Continue debugging.
 
 Expected
 
-Only language memory injected.
+Relevant coding history preserved.
 
 ---
 
 Scenario 4
 
-User
+Topic Change
 
-"Hello"
+Discussed movies.
 
-Expected
+Later
 
-No memory retrieval.
-
-Immediate greeting.
-
----
-
-Scenario 5
-
-User
-
-"Summarize everything you know about me."
+Explain binary search.
 
 Expected
 
-Inject all active relevant memories.
+Movie discussion removed.
 
 ---
 
 # Performance
 
-Target:
+Filtering time
 
-Context filtering
+Target
 
-< 20 ms
+<20 ms
 
-Memory filtering must not noticeably increase response latency.
+Reduce average conversation tokens by at least 70%.
+
+Improve response relevance.
 
 ---
 
 # Deliverables
 
-1. Implement the Memory Relevance Filter.
-2. Prevent unrelated memories from entering prompts.
-3. Classify user queries before context building.
-4. Inject only relevant memories.
-5. Skip context entirely when no relevant memories exist.
-6. Preserve backward compatibility with the existing Memory Service and Cognitive Request Router.
-7. Produce concise, focused prompts that improve response quality and reduce token usage.
+1. Implement an Intelligent Conversation Context Filter.
+2. Prevent unrelated conversation history from reaching the LLM.
+3. Dynamically detect topic changes.
+4. Filter conversation history using semantic relevance.
+5. Reduce prompt size and token usage.
+6. Preserve complete backward compatibility.
+7. Ensure Aetheris answers only the current question unless previous conversation is genuinely required.
 
-The final result should make Aetheris context-aware rather than context-heavy, ensuring every injected memory directly contributes to answering the user's current question.
+The final result should make Aetheris context-aware rather than conversation-heavy. It should remember the past without allowing unrelated history to pollute current responses, producing focused, accurate, and natural answers.

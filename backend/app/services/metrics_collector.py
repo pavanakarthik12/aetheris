@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-import time
+from collections import deque
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -15,11 +15,11 @@ class MetricsCollector:
     """Collect and expose request-level performance metrics."""
 
     def __init__(self) -> None:
-        self._durations: list[float] = []
-        self._retrieval_times: list[float] = []
-        self._llm_times: list[float] = []
-        self._prompt_sizes: list[int] = []
-        self._completion_sizes: list[int] = []
+        self._durations: deque[float] = deque(maxlen=_WINDOW_SIZE)
+        self._retrieval_times: deque[float] = deque(maxlen=_WINDOW_SIZE)
+        self._llm_times: deque[float] = deque(maxlen=_WINDOW_SIZE)
+        self._prompt_sizes: deque[int] = deque(maxlen=_WINDOW_SIZE)
+        self._completion_sizes: deque[int] = deque(maxlen=_WINDOW_SIZE)
         self._dedup_count: int = 0
         self._cache_hits: int = 0
         self._retry_count: int = 0
@@ -47,15 +47,7 @@ class MetricsCollector:
         if cache_hit:
             self._cache_hits += 1
 
-        # Trim to window
-        if len(self._durations) > _WINDOW_SIZE:
-            self._durations.pop(0)
-            self._retrieval_times.pop(0)
-            self._llm_times.pop(0)
-            self._prompt_sizes.pop(0)
-            self._completion_sizes.pop(0)
-
-    def _avg(self, values: list[float]) -> float:
+    def _avg(self, values: deque[float]) -> float:
         return round(sum(values) / len(values), 2) if values else 0.0
 
     def snapshot(self) -> dict[str, Any]:

@@ -60,6 +60,24 @@ class MemoryEvaluation(BaseModel):
         "Other",
     ] = Field(description="The memory category.")
     reason: str = Field(min_length=1, max_length=500, description="Short explanation for the decision.")
+    memory_fact: str = Field(
+        default="",
+        max_length=1000,
+        description="Third-person sentence describing the user fact. "
+        "E.g., 'The user is building a project called Aetheris.' "
+        "Never use first person ('I', 'my', 'me').",
+    )
+    attribute: str = Field(
+        default="",
+        max_length=100,
+        description="Machine-readable attribute key, e.g., 'current_project', "
+        "'favorite_programming_language', 'name'.",
+    )
+    value: str = Field(
+        default="",
+        max_length=500,
+        description="The value of the attribute, e.g., 'Aetheris', 'Python', 'Creator'.",
+    )
 
 
 class MemoryEvaluatorService:
@@ -98,11 +116,15 @@ class MemoryEvaluatorService:
 
         evaluation = self._parse_response(raw_response)
         self._logger.info(
-            "Memory evaluation result | store=%s | category=%s | importance=%.2f | reason=%s",
+            "Memory evaluation result | store=%s | category=%s | importance=%.2f | reason=%s | "
+            "attribute=%s | value=%s | memory_fact=%.60r",
             evaluation.store,
             evaluation.category,
             evaluation.importance,
             evaluation.reason,
+            evaluation.attribute,
+            evaluation.value,
+            evaluation.memory_fact,
         )
         return evaluation
 

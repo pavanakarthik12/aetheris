@@ -76,17 +76,8 @@ class ChromaService:
                 documents=[document],
                 metadatas=[metadata],
             )
-            stored = collection.get(ids=[memory_id], include=["documents", "metadatas"])
-            if not stored.get("ids"):
-                raise ChromaServiceError(
-                    f"ChromaDB did not confirm insertion for memory '{memory_id}'.",
-                    status_code=500,
-                )
 
-            logger.info("Memory Saved")
-            logger.info("Memory ID | %s", memory_id)
-            logger.info("Memory Text | %s", document)
-            logger.info("Memory stored | id=%s | doc_length=%d", memory_id, len(document))
+            logger.debug("Memory stored | id=%s | doc_length=%d", memory_id, len(document))
         except Exception as exc:
             # ChromaDB raises a plain Exception (or a subclass) for duplicate IDs
             error_msg = str(exc).lower()
@@ -107,7 +98,7 @@ class ChromaService:
     ) -> list[dict[str, Any]]:
         """Return the *top_k* most semantically similar memories."""
         collection = self._get_collection()
-        logger.info("Query | top_k=%d | dim=%d", top_k, len(query_embedding))
+        logger.debug("Query | top_k=%d | dim=%d", top_k, len(query_embedding))
 
         # Always ask ChromaDB for the live count — never use a cached value.
         # A stale count of 0 would cause an early return even when data exists.
@@ -150,9 +141,9 @@ class ChromaService:
                 }
             )
 
-        logger.info("Retrieved Memories | count=%d", len(records))
+        logger.debug("Retrieved Memories | count=%d", len(records))
         for record in records:
-            logger.info(
+            logger.debug(
                 "Similarity Score | id=%s | score=%.6f | text=%s",
                 record["id"],
                 record["score"],
@@ -375,9 +366,4 @@ class ChromaService:
                 ) from exc
         return self._collection
 
-    def _collection_count(self) -> int:
-        """Return the live number of records in the collection."""
-        try:
-            return self._get_collection().count()
-        except Exception:
-            return 0
+

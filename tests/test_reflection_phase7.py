@@ -155,8 +155,8 @@ def _cosine_similarity(left: list[float], right: list[float]) -> float:
 
 
 class FakeLLMService:
-    async def generate_text(self, prompt: str) -> str:
-        is_reflection = "Cognitive Reflection Engine" in prompt
+    async def generate_text(self, prompt: str, max_tokens: int | None = None, temperature: float | None = None) -> str:
+        is_reflection = '"action":"NO_ACTION"' in prompt
         if not is_reflection:
             return "ok"
 
@@ -670,7 +670,7 @@ class ReflectionPhase7Tests(unittest.TestCase):
 
 
 class BrokenLLMService:
-    async def generate_text(self, prompt: str) -> str:
+    async def generate_text(self, prompt: str, max_tokens: int | None = None, temperature: float | None = None) -> str:
         raise RuntimeError("LLM unavailable")
 
     async def aclose(self) -> None:

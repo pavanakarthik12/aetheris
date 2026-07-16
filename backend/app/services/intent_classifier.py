@@ -8,6 +8,7 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 from ..schemas.routing import IntentClassification, IntentType
+from .exceptions import LLMServiceError
 from .llm_service import LLMService
 from .prompt_builder import PromptBuilder
 
@@ -206,7 +207,7 @@ class LLMIntentClassifier(BaseIntentClassifier):
                 metadata={"reason": parsed.get("reason", "")},
                 classifier_source="llm",
             )
-        except Exception as exc:
+        except (LLMServiceError, json.JSONDecodeError, KeyError, ValueError, TypeError) as exc:
             logger.warning("LLM intent classification failed | error=%s", exc)
             return IntentClassification(
                 primary_intent=IntentType.NORMAL_CHAT,

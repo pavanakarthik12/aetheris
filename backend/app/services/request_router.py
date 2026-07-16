@@ -397,7 +397,7 @@ class CognitiveRequestRouter:
             return RouterResult(
                 response=response,
                 memory_count=self._count_injected(memory_context),
-                memory_action=debug._memory_action,
+                memory_action=debug.memory_action,
                 memory_success=True,
             )
 
@@ -550,7 +550,7 @@ class CognitiveRequestRouter:
             return RouterResult(
                 response=response,
                 memory_count=self._count_injected(memory_context),
-                memory_action=debug._memory_action,
+                memory_action=debug.memory_action,
                 memory_success=True,
             )
 
@@ -1026,6 +1026,10 @@ class RouterDebugifier:
 
     def set_duration(self, ms: float) -> None:
         self._duration = ms
+
+    @property
+    def memory_action(self) -> MemoryActionType:
+        return self._memory_action
 
     def set_memory_action(self, action: MemoryActionType) -> None:
         self._memory_action = action

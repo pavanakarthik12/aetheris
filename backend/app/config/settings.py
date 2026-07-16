@@ -1,5 +1,3 @@
-"""Centralized application settings loaded from the repository .env file."""
-
 from __future__ import annotations
 
 import os
@@ -11,7 +9,6 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parents[3]
 ENV_PATH = BASE_DIR / ".env"
 
-# Absolute default paths — never depend on the CWD at runtime.
 _DEFAULT_CHROMA_PATH = str(BASE_DIR / "database" / "chroma")
 
 
@@ -29,9 +26,6 @@ def _load_env_file() -> dict[str, str]:
         key, value = line.split("=", 1)
         values[key.strip()] = value.strip().strip('"').strip("'")
 
-    # If CHROMA_DB_PATH is a relative path in the .env file, resolve it
-    # against BASE_DIR so the database always lands in the same place
-    # regardless of where the server process is launched from.
     if "CHROMA_DB_PATH" in values:
         p = Path(values["CHROMA_DB_PATH"])
         if not p.is_absolute():
@@ -50,8 +44,6 @@ def _resolve(values: dict[str, str], *names: str) -> str:
 
 @dataclass(frozen=True)
 class Settings:
-    """Application configuration backed by environment variables."""
-
     app_name: str = "Aetheris"
     api_v1_prefix: str = "/api/v1"
     database_url: str = ""
@@ -63,20 +55,10 @@ class Settings:
     reflection_temperature: float = 0.2
     reflection_enabled: bool = True
 
-    # Legacy single-provider fields (backward compat)
-    qwen_api_key: str = ""
-    qwen_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-    llm_provider: str = "qwen"
-    llm_model: str = "qwen-3.7-plus"
+    # Provider config
+    llm_provider: str = "groq"
 
-    # Primary provider (OpenRouter)
-    primary_provider: str = "openrouter"
-    openrouter_api_key: str = ""
-    openrouter_base_url: str = "https://openrouter.ai/api/v1"
-    openrouter_model: str = "qwen/qwen3-next-80b-a3b-instruct:free"
-
-    # Secondary provider (Groq)
-    secondary_provider: str = "groq"
+    # Groq
     groq_api_key: str = ""
     groq_base_url: str = "https://api.groq.com/openai/v1"
     groq_model: str = "llama-3.3-70b-versatile"
@@ -85,24 +67,16 @@ class Settings:
     llm_temperature: float = 0.7
     llm_max_tokens: int = 256
     llm_timeout: float = 30.0
-    enable_provider_failover: bool = True
     enable_circuit_breaker: bool = True
 
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    """Return the cached settings instance."""
-
     env_file_values = _load_env_file()
 
-    # Legacy env var fallback chain
     legacy_api_key = _resolve(env_file_values, "QWEN_API_KEY")
-    legacy_base_url = _resolve(
-        env_file_values,
-        "QWEN_BASE_URL",
-    ) or "https://dashscope.aliyuncs.com/compatible-mode/v1"
-    legacy_provider = _resolve(env_file_values, "LLM_PROVIDER") or "qwen"
-    legacy_model = _resolve(env_file_values, "LLM_MODEL") or "qwen-3.7-plus"
+    legacy_base_url = _resolve(env_file_values, "QWEN_BASE_URL") or "https://api.groq.com/openai/v1"
+    legacy_model = _resolve(env_file_values, "LLM_MODEL") or "llama-3.3-70b-versatile"
 
     return Settings(
         app_name=os.getenv("APP_NAME", env_file_values.get("APP_NAME", "Aetheris")),
@@ -125,36 +99,15 @@ def get_settings() -> Settings:
             os.getenv("REFLECTION_ENABLED", env_file_values.get("REFLECTION_ENABLED", "true")).lower()
             in ("true", "1", "yes")
         ),
-        # Legacy fields (backward compat)
-        qwen_api_key=legacy_api_key,
-        qwen_base_url=legacy_base_url,
-        llm_provider=legacy_provider,
-        llm_model=legacy_model,
-        # Primary provider (OpenRouter)
-        primary_provider=os.getenv("PRIMARY_PROVIDER", env_file_values.get("PRIMARY_PROVIDER", "openrouter")),
-        openrouter_api_key=os.getenv(
-            "OPENROUTER_API_KEY",
-            env_file_values.get("OPENROUTER_API_KEY", legacy_api_key),
-        ),
-        openrouter_base_url=os.getenv(
-            "OPENROUTER_BASE_URL",
-            env_file_values.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
-        ),
-        openrouter_model=os.getenv(
-            "OPENROUTER_MODEL",
-            env_file_values.get("OPENROUTER_MODEL", legacy_model),
-        ),
-        # Secondary provider (Groq)
-        secondary_provider=os.getenv("SECONDARY_PROVIDER", env_file_values.get("SECONDARY_PROVIDER", "groq")),
-        groq_api_key=os.getenv("GROQ_API_KEY", env_file_values.get("GROQ_API_KEY", "")),
+        # Provider
+        llm_provider=os.getenv("LLM_PROVIDER", env_file_values.get("LLM_PROVIDER", "groq")),
+        # Groq (falls back to legacy QWEN_* vars for backward compat)
+        groq_api_key=os.getenv("GROQ_API_KEY", env_file_values.get("GROQ_API_KEY", legacy_api_key)),
         groq_base_url=os.getenv(
             "GROQ_BASE_URL",
-            env_file_values.get("GROQ_BASE_URL", "https://api.groq.com/openai/v1"),
+            env_file_values.get("GROQ_BASE_URL", legacy_base_url),
         ),
-        groq_model=os.getenv(
-            "GROQ_MODEL",
-            env_file_values.get("GROQ_MODEL", "llama-3.3-70b-versatile"),
-        ),
+        groq_model=os.getenv("GROQ_MODEL", env_file_values.get("GROQ_MODEL", legacy_model)),
         # Global LLM settings
         llm_temperature=float(
             os.getenv("LLM_TEMPERATURE", env_file_values.get("LLM_TEMPERATURE", "0.7"))
@@ -164,10 +117,6 @@ def get_settings() -> Settings:
         ),
         llm_timeout=float(
             os.getenv("LLM_TIMEOUT", env_file_values.get("LLM_TIMEOUT", "30"))
-        ),
-        enable_provider_failover=(
-            os.getenv("ENABLE_PROVIDER_FAILOVER", env_file_values.get("ENABLE_PROVIDER_FAILOVER", "true")).lower()
-            in ("true", "1", "yes")
         ),
         enable_circuit_breaker=(
             os.getenv("ENABLE_CIRCUIT_BREAKER", env_file_values.get("ENABLE_CIRCUIT_BREAKER", "true")).lower()

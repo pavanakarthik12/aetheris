@@ -4,8 +4,9 @@ import logging
 
 from fastapi import APIRouter, Depends, Query
 
-from ..dependencies import get_context_builder_service, get_memory_service
+from ..dependencies import get_context_builder_service, get_llm_service, get_memory_service
 from ..services.context_builder import ContextBuilderService
+from ..services.llm_service import LLMService
 from ..services.memory_service import MemoryService
 
 router = APIRouter(prefix="/api/context", tags=["context"])
@@ -20,8 +21,7 @@ async def debug_filter(
     memory_service: MemoryService = Depends(get_memory_service),
 ):
     """Run the Memory Relevance Filter on live memories for a given query."""
-    results = memory_service.search_memories(query=query, limit=limit)
-    memories = results.get("memories", []) if isinstance(results, dict) else []
+    memories = await memory_service.search_memory(query=query, top_k=limit)
 
     filter_result = context_builder.debug_filter(query=query, memories=memories)
 
@@ -49,4 +49,40 @@ async def debug_filter(
             for m in filter_result.discarded_memories
         ],
         "scores": filter_result.scores,
+    }
+
+
+@router.get("/conversation")
+async def debug_conversation(
+    query: str = Query(..., min_length=1, max_length=500),
+    llm_service: LLMService = Depends(get_llm_service),
+):
+    """Show conversation history with relevance filtering for a given query."""
+    from ..services.conversation_context_filter import filter_conversation
+
+    history = llm_service.conversation_history
+    filter_result = filter_conversation(query, history)
+
+    return {
+        "query": query,
+        "query_type": filter_result.query_type.value,
+        "total_before": filter_result.total_before,
+        "total_after": filter_result.total_after,
+        "discarded_count": len(filter_result.discarded),
+        "execution_time_ms": filter_result.execution_time_ms,
+        "filtered": [
+            {
+                "role": m.get("role"),
+                "content": m.get("content", "")[:300],
+            }
+            for m in filter_result.filtered_history
+        ],
+        "discarded": [
+            {
+                "role": m.get("role"),
+                "content": m.get("content", "")[:300],
+                "reason": "below relevance threshold",
+            }
+            for m in filter_result.discarded
+        ],
     }

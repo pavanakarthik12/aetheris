@@ -25,10 +25,6 @@ class MemoryServiceError(RuntimeError):
         self.status_code = status_code
 
 
-# Sentinel so callers can distinguish "not provided" from an explicit None
-_MISSING = object()
-
-
 class MemoryService:
     """Orchestrate semantic memory storage and retrieval.
 
@@ -89,13 +85,12 @@ class MemoryService:
         # 1. Generate embedding
         try:
             embedding = await self._embeddings.embed_text(memory_text)
-            logger.info(
-                "Embedding generated for memory | id=%s | dim=%d | text=%s",
+            logger.debug(
+                "Embedding generated for memory | id=%s | dim=%d",
                 memory_id,
                 len(embedding),
-                memory_text,
             )
-            logger.info("Memory metadata | id=%s | metadata=%s", memory_id, resolved_meta)
+            logger.debug("Memory metadata | id=%s | metadata=%s", memory_id, resolved_meta)
         except EmbeddingServiceError as exc:
             logger.exception("Embedding failed during save_memory | id=%s", memory_id)
             raise MemoryServiceError(
@@ -157,7 +152,7 @@ class MemoryService:
             top_k = 100
 
         logger.info("Searching memories | query_length=%d | top_k=%d", len(query), top_k)
-        logger.info("Search query | %s", query)
+        logger.debug("Search query | %s", query)
 
         # 1. Embed the query
         try:
@@ -188,12 +183,11 @@ class MemoryService:
 
         logger.info("Memory search returned %d result(s) after dedup | query=%.60r", len(results), query)
         for i, r in enumerate(results):
-            logger.info(
-                "  result[%d] | score=%.4f | strength=%.2f | importance=%.2f | text=%.80r",
+            logger.debug(
+                "  result[%d] | score=%.4f | strength=%.2f | importance=%.2f",
                 i, r.get("score", 0),
                 r.get("metadata", {}).get("memory_strength", 0.0),
                 r.get("metadata", {}).get("importance", 0.0),
-                r.get("document", ""),
             )
         return results
 

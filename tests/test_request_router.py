@@ -148,10 +148,31 @@ class FakeMemoryEvolution:
 
 
 class FakeLLMService:
-    async def generate_with_context(self, user_message: str, system_prompt: str, memory_context: str = "") -> str:
+    def __init__(self) -> None:
+        self._conversation_history: list[dict[str, Any]] = []
+
+    @property
+    def conversation_history(self) -> list[dict[str, Any]]:
+        return list(self._conversation_history)
+
+    def store_exchange(self, user_message: str, assistant_response: str) -> None:
+        self._conversation_history.append({"role": "user", "content": user_message})
+        self._conversation_history.append({"role": "assistant", "content": assistant_response})
+
+    def clear_conversation(self) -> None:
+        self._conversation_history.clear()
+
+    async def generate_with_context(
+        self,
+        user_message: str,
+        system_prompt: str,
+        memory_context: str = "",
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+    ) -> str:
         return f"Response to: {user_message}"
 
-    async def generate_text(self, prompt: str) -> str:
+    async def generate_text(self, prompt: str, max_tokens: int | None = None, temperature: float | None = None) -> str:
         return "ok"
 
     async def aclose(self) -> None:
@@ -159,7 +180,13 @@ class FakeLLMService:
 
 
 class FakeContextBuilder:
-    def build_memory_context(self, memories: list[dict[str, Any]]) -> str:
+    def build_memory_context(
+        self,
+        memories: list[dict[str, Any]],
+        min_score: float = 0.20,
+        max_memories: int = 5,
+        query: str = "",
+    ) -> str:
         if not memories:
             return ""
         lines = [f"- {m['document']}" for m in memories]
@@ -233,9 +260,9 @@ class CognitiveRequestRouterTests(unittest.TestCase):
     # --------------------------------------------------------------
     def test_normal_chat_returns_response(self) -> None:
         self.intent_classifier._intent = IntentType.NORMAL_CHAT
-        result = self._route("Hello")
+        result = self._route("Tell me about AI")
         self.assertEqual(result.debug.detected_intent, IntentType.NORMAL_CHAT)
-        self.assertIn("Hello", result.response)
+        self.assertIn("AI", result.response)
         self.assertTrue(result.memory_success)
 
     def test_normal_chat_includes_memory_count(self) -> None:
@@ -334,7 +361,7 @@ class CognitiveRequestRouterTests(unittest.TestCase):
     # --------------------------------------------------------------
     def test_debug_info_includes_all_fields(self) -> None:
         self.intent_classifier._intent = IntentType.NORMAL_CHAT
-        result = self._route("Hello")
+        result = self._route("Tell me about AI")
         debug = result.debug
         self.assertEqual(debug.detected_intent, IntentType.NORMAL_CHAT)
         self.assertGreater(debug.confidence, 0.0)
@@ -344,7 +371,7 @@ class CognitiveRequestRouterTests(unittest.TestCase):
 
     def test_debug_tracks_steps(self) -> None:
         self.intent_classifier._intent = IntentType.NORMAL_CHAT
-        result = self._route("Hello")
+        result = self._route("Tell me about AI")
         step_names = [s.subsystem for s in result.debug.steps]
         self.assertIn("IntentClassifier", step_names)
         self.assertIn("LLM", step_names)

@@ -56,7 +56,7 @@ class ContextBuilderService:
             )
             return ""
 
-        result = PromptBuilder.memory_context_block(capped)
+        result = PromptBuilder.user_facts_block(capped)
 
         logger.info(
             "build_memory_context | query_type=%s | total=%d | relevant=%d | discarded=%d | deduped=%d | final=%d | %.2fms",
