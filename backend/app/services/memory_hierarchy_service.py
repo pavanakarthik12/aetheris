@@ -6,6 +6,7 @@ from time import perf_counter
 from typing import Any
 
 from ..schemas.routing import IntentType
+from .conversation_context_filter import QueryType, classify_query
 from .conversation_memory import ConversationMemory
 from .memory_service import MemoryService
 from .system_memory import SystemMemory
@@ -33,6 +34,7 @@ class MemoryHierarchyService:
         self._conversation = conversation_memory
         self._long_term = long_term_memory
         self._system = system_memory
+        self._last_result: HierarchyResult = HierarchyResult()
 
     async def resolve(
         self,
@@ -50,38 +52,35 @@ class MemoryHierarchyService:
         elif intent == IntentType.SYSTEM_QUERY:
             result = self._use_system_only(message)
 
-        elif intent in (IntentType.MATH, IntentType.GREETING):
-            result = HierarchyResult(memory_layer="none")
-
-        elif intent == IntentType.PROGRAMMING:
-            conv = self._conversation.get_recent(turns=5)
-            result = HierarchyResult(
-                memory_layer="conversation",
-                conversation_messages=conv,
-                context_text=self._build_conversation_text(conv),
-            )
-
-        elif intent == IntentType.NORMAL_CHAT:
-            conv = self._conversation.get_recent(turns=10)
-            lt = await self._long_term.search_memory(query=message, top_k=5)
-            result = HierarchyResult(
-                memory_layer="conversation+long_term",
-                conversation_messages=conv,
-                long_term_memories=lt,
-                context_text=self._build_combined_text(conv, lt),
-            )
-
         else:
-            conv = self._conversation.get_recent(turns=5)
-            lt = await self._long_term.search_memory(query=message, top_k=5)
-            result = HierarchyResult(
-                memory_layer="conversation+long_term",
-                conversation_messages=conv,
-                long_term_memories=lt,
-                context_text=self._build_combined_text(conv, lt),
-            )
+            # NORMAL_CHAT / UNKNOWN / anything else falls through to a
+            # finer-grained query-type check (math, greeting, programming,
+            # general) since IntentType itself has no such members.
+            query_type = classify_query(message)
+
+            if query_type in (QueryType.MATH, QueryType.GREETING):
+                result = HierarchyResult(memory_layer="none")
+
+            elif query_type == QueryType.PROGRAMMING:
+                conv = self._conversation.get_recent(turns=5)
+                result = HierarchyResult(
+                    memory_layer="conversation",
+                    conversation_messages=conv,
+                    context_text=self._build_conversation_text(conv),
+                )
+
+            else:
+                conv = self._conversation.get_recent(turns=10)
+                lt = await self._long_term.search_memory(query=message, top_k=5)
+                result = HierarchyResult(
+                    memory_layer="conversation+long_term",
+                    conversation_messages=conv,
+                    long_term_memories=lt,
+                    context_text=self._build_combined_text(conv, lt),
+                )
 
         result.execution_time_ms = (perf_counter() - started) * 1000
+        self._last_result = result
 
         logger.info(
             "Memory hierarchy resolved | layer=%s | conv=%d | lt=%d | system=%d | %.2fms",
@@ -169,5 +168,14 @@ class MemoryHierarchyService:
                 "conversation": "Never embedded into ChromaDB. Temporary per-session.",
                 "long_term": "Persists across sessions. Only queried for relevant intents.",
                 "system": "Read-only. Never editable by user commands.",
+            },
+            "last_resolution": {
+                "memory_source_selected": self._last_result.memory_layer,
+                "conversation_messages_used": len(self._last_result.conversation_messages),
+                "long_term_memories_used": len(self._last_result.long_term_memories),
+                "system_memories_used": len(self._last_result.system_memories),
+                "context_used": self._last_result.context_text,
+                "context_size_chars": len(self._last_result.context_text),
+                "resolution_time_ms": self._last_result.execution_time_ms,
             },
         }

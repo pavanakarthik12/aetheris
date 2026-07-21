@@ -101,3 +101,21 @@ async def chat(
         memory_success=router_result.memory_success,
         memory_error=router_result.memory_error,
     )
+
+
+@router.post("/api/session/reset")
+async def reset_session(
+    conversation_memory: ConversationMemory = Depends(get_conversation_memory),
+) -> dict:
+    """Start a new conversation session.
+
+    Clears Short-Term Conversation Memory only. Long-Term User Memory and
+    System Memory are untouched — they persist independently of the session.
+    """
+
+    new_session_id = conversation_memory.reset_session()
+    logger.info("Conversation session reset via API | new_session=%s", new_session_id)
+    return {
+        "session_id": new_session_id,
+        "message": "Conversation memory cleared. Long-term memory is unaffected.",
+    }

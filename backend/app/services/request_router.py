@@ -578,8 +578,16 @@ class CognitiveRequestRouter:
         steps: list[RouteStep],
         debug: RouterDebugifier,
     ) -> RouterResult:
-        memories = await self._retrieve_memories(message, steps)
-        memory_context = self._build_context(memories, steps, query=message)
+        if self._memory_hierarchy is not None:
+            hierarchy = await self._resolve_hierarchy(message, IntentType.SEARCH_MEMORY, steps)
+            memory_context = hierarchy.context_text
+            debug.set_memory_layer(hierarchy.memory_layer)
+            debug.set_long_term_count(len(hierarchy.long_term_memories))
+            debug.set_context_size(len(memory_context))
+        else:
+            memories = await self._retrieve_memories(message, steps)
+            memory_context = self._build_context(memories, steps, query=message)
+
         injected_count = self._count_injected(memory_context)
 
         if not memory_context:
@@ -651,8 +659,15 @@ class CognitiveRequestRouter:
         steps: list[RouteStep],
         debug: RouterDebugifier,
     ) -> RouterResult:
-        memories = await self._retrieve_memories(message, steps)
-        memory_context = self._build_context(memories, steps, query=message)
+        if self._memory_hierarchy is not None:
+            hierarchy = await self._resolve_hierarchy(message, IntentType.SYSTEM_QUERY, steps)
+            memory_context = hierarchy.context_text
+            debug.set_memory_layer(hierarchy.memory_layer)
+            debug.set_system_count(len(hierarchy.system_memories))
+            debug.set_context_size(len(memory_context))
+        else:
+            memories = await self._retrieve_memories(message, steps)
+            memory_context = self._build_context(memories, steps, query=message)
 
         budget = select_budget(message, intent=IntentType.SYSTEM_QUERY)
         response = await self._call_llm(

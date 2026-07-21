@@ -142,14 +142,21 @@ def get_intent_classifier(
     return IntentClassifier(llm_service=llm_service)
 
 
+@lru_cache(maxsize=1)
 def get_conversation_memory() -> "ConversationMemory":
-    """Provide the shared in-memory conversation store."""
+    """Provide the shared in-memory conversation store.
+
+    Must be a process-wide singleton (not recreated per request) — otherwise
+    the current conversation session is lost between chat turns and
+    "previous conversation" queries can never find anything.
+    """
 
     from .services.conversation_memory import ConversationMemory
 
     return ConversationMemory()
 
 
+@lru_cache(maxsize=1)
 def get_system_memory() -> "SystemMemory":
     """Provide the shared system memory store."""
 
