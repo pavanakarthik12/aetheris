@@ -166,6 +166,8 @@ class ImmediateMemoryProcessor:
         }
 
         if evaluation.attribute and evaluation.value:
+            base_metadata["attribute"] = evaluation.attribute
+            base_metadata["value"] = evaluation.value
             base_metadata["fact"] = {
                 "category": evaluation.category.lower() if evaluation.category else "",
                 "attribute": evaluation.attribute,
@@ -207,8 +209,12 @@ class ImmediateMemoryProcessor:
                     metadata=base_metadata,
                 )
                 logger.info(
-                    "Memory CREATED via immediate processor | id=%s | fact=%.60r",
-                    result["memory_id"], storage_text,
+                    "Memory CREATED via immediate processor | id=%s | "
+                    "attribute=%s | value=%s | fact=%.60r",
+                    result["memory_id"],
+                    evaluation.attribute or "unknown",
+                    evaluation.value or "unknown",
+                    storage_text,
                 )
                 return ImmediateMemoryResult(
                     action=MemoryActionType.CREATE,
@@ -231,7 +237,14 @@ class ImmediateMemoryProcessor:
                     new_text=storage_text,
                     new_metadata=base_metadata,
                 )
-                logger.info("Memory UPDATED via immediate processor | id=%s", result["memory_id"])
+                logger.info(
+                    "Memory UPDATED via immediate processor | id=%s | "
+                    "attribute=%s | value=%s | fact=%.60r",
+                    result["memory_id"],
+                    evaluation.attribute or "unknown",
+                    evaluation.value or "unknown",
+                    storage_text,
+                )
                 return ImmediateMemoryResult(
                     action=MemoryActionType.UPDATE,
                     success=True,

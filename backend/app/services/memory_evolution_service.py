@@ -252,10 +252,22 @@ class MemoryEvolutionService:
         if dedup:
             return dedup
 
+        # Try to extract attribute_hint from metadata if available
+        attribute_hint = None
+        if metadata:
+            attr_from_meta = metadata.get("attribute")
+            if attr_from_meta:
+                attribute_hint = attr_from_meta
+            else:
+                fact_data = metadata.get("fact")
+                if isinstance(fact_data, dict):
+                    attribute_hint = fact_data.get("attribute")
+
         resolution = await resolve_conflict(
             memory_text=memory_text,
             chroma_service=self._chroma_service,
             archive_fn=self.archive_memory,
+            attribute_hint=attribute_hint,
         )
 
         if not resolution.get("verified"):
@@ -271,8 +283,12 @@ class MemoryEvolutionService:
 
         if resolution["conflict_detected"]:
             logger.info(
-                "New Active Memory | attribute=%s | text=%.80r",
-                resolution["attribute"], memory_text,
+                "Memory Update Requested | attribute=%s | "
+                "archived_id=%s | new_text=%.80r | "
+                "persistence=pending | embedding_updated=pending",
+                resolution["attribute"],
+                resolution.get("archived_memory_id", "unknown"),
+                memory_text,
             )
 
         resolved = dict(metadata or {})
@@ -286,6 +302,8 @@ class MemoryEvolutionService:
         attr = resolution.get("attribute")
         if attr:
             resolved["attribute"] = attr
+        elif attribute_hint:
+            resolved["attribute"] = attribute_hint
 
         result = await self._memory_service.save_memory(memory_text, metadata=resolved)
         return result
@@ -354,8 +372,17 @@ class MemoryEvolutionService:
             if key in old_meta and key not in new_meta:
                 new_meta.setdefault(key, old_meta[key])
 
-        # Detect single-value attribute in the new text and tag the metadata
+        # Detect single-value attribute from text or metadata fallback
         detected_attr = extract_attribute(new_text)
+        if not detected_attr:
+            attr_from_meta = new_metadata.get("attribute") if new_metadata else None
+            if not attr_from_meta:
+                fact_data = new_metadata.get("fact") if new_metadata else None
+                if isinstance(fact_data, dict):
+                    attr_from_meta = fact_data.get("attribute")
+            if attr_from_meta and attr_from_meta in SINGLE_VALUE_ATTRIBUTES:
+                detected_attr = attr_from_meta
+
         if detected_attr and detected_attr in SINGLE_VALUE_ATTRIBUTES:
             new_meta["attribute"] = detected_attr
 
@@ -401,9 +428,14 @@ class MemoryEvolutionService:
                 str(exc), status_code=exc.status_code,
             ) from exc
 
+        attr_label = new_meta.get("attribute", "unknown")
         logger.info(
-            "Memory updated | id=%s | old_version=%d | new_version=%d | history_entries=%d",
-            memory_id, old_version, old_version + 1, len(old_history),
+            "Memory Update Requested | id=%s | attribute=%s | "
+            "old_value=%.80r | new_value=%.80r | "
+            "version=%d | embedding_updated=yes | persistence=success",
+            memory_id, attr_label,
+            old_doc, new_text,
+            old_version + 1,
         )
 
         return {"memory_id": memory_id, "version": old_version + 1, "status": "updated"}

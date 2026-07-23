@@ -35,52 +35,58 @@ SINGLE_VALUE_ATTRIBUTES: frozenset[str] = frozenset({
 })
 
 # ---------------------------------------------------------------------------
-# Attribute extraction patterns
+# Attribute extraction patterns (multiple regexes per attribute)
 # ---------------------------------------------------------------------------
 
-_ATTRIBUTE_PATTERNS: dict[str, re.Pattern[str]] = {
-    "name": re.compile(
-        r"\bmy name is\s+(.+?)(?:\.|,|$)", re.IGNORECASE,
-    ),
-    "age": re.compile(
-        r"\bi\s*(?:am|'m)\s+(\d+)\s*(?:years?\s*old|yo)\b", re.IGNORECASE,
-    ),
-    "birthday": re.compile(
-        r"\b(?:my birthday is|i was born on)\s+(.+?)(?:\.|,|$)", re.IGNORECASE,
-    ),
-    "favorite_programming_language": re.compile(
-        r"\bfavorite\s+(?:programming\s+)?language is\s+(.+?)(?:\.|,|$)",
-        re.IGNORECASE,
-    ),
-    "favorite_subject": re.compile(
-        r"\bfavorite\s+subject is\s+(.+?)(?:\.|,|$)", re.IGNORECASE,
-    ),
-    "favorite_food": re.compile(
-        r"\bfavorite\s+food is\s+(.+?)(?:\.|,|$)", re.IGNORECASE,
-    ),
-    "city": re.compile(
-        r"\bmy city is\s+(.+?)(?:\.|,|$)", re.IGNORECASE,
-    ),
-    "country": re.compile(
-        r"\bmy country is\s+(.+?)(?:\.|,|$)", re.IGNORECASE,
-    ),
-    "occupation": re.compile(
-        r"\b(?:i work as|my occupation is)\s+(.+?)(?:\.|,|$)", re.IGNORECASE,
-    ),
-    "school": re.compile(
-        r"\b(?:my school is|i go to)\s+(.+?)(?:\.|,|$)", re.IGNORECASE,
-    ),
-    "university": re.compile(
-        r"\b(?:my university is|i study at)\s+(.+?)(?:\.|,|$)", re.IGNORECASE,
-    ),
-    "company": re.compile(
-        r"\b(?:my company is|i work at)\s+(.+?)(?:\.|,|$)", re.IGNORECASE,
-    ),
-    "relationship_status": re.compile(
-        r"\b(?:i am|my relationship status is)\s+"
-        r"(single|married|engaged|divorced|dating|widowed)\b",
-        re.IGNORECASE,
-    ),
+_ATTRIBUTE_PATTERNS: dict[str, list[re.Pattern[str]]] = {
+    "name": [
+        re.compile(r"\bmy name is\s+(.+?)(?:\.|,|$)", re.IGNORECASE),
+        re.compile(r"\bcall me\s+(.+?)(?:\.|,|$)", re.IGNORECASE),
+        re.compile(r"\brefer to me as\s+(.+?)(?:\.|,|$)", re.IGNORECASE),
+        re.compile(r"\bdon'?t\s+call\s+me\b", re.IGNORECASE),
+        re.compile(r"\bchange my name to\s+(.+?)(?:\.|,|$)", re.IGNORECASE),
+        re.compile(r"\bupdate my name to\s+(.+?)(?:\.|,|$)", re.IGNORECASE),
+    ],
+    "age": [
+        re.compile(r"\bi\s*(?:am|'m)\s+(\d+)\s*(?:years?\s*old|yo)\b", re.IGNORECASE),
+    ],
+    "birthday": [
+        re.compile(r"\b(?:my birthday is|i was born on)\s+(.+?)(?:\.|,|$)", re.IGNORECASE),
+    ],
+    "favorite_programming_language": [
+        re.compile(r"\bfavorite\s+(?:programming\s+)?language is\s+(.+?)(?:\.|,|$)", re.IGNORECASE),
+    ],
+    "favorite_subject": [
+        re.compile(r"\bfavorite\s+subject is\s+(.+?)(?:\.|,|$)", re.IGNORECASE),
+    ],
+    "favorite_food": [
+        re.compile(r"\bfavorite\s+food is\s+(.+?)(?:\.|,|$)", re.IGNORECASE),
+    ],
+    "city": [
+        re.compile(r"\bmy city is\s+(.+?)(?:\.|,|$)", re.IGNORECASE),
+    ],
+    "country": [
+        re.compile(r"\bmy country is\s+(.+?)(?:\.|,|$)", re.IGNORECASE),
+    ],
+    "occupation": [
+        re.compile(r"\b(?:i work as|my occupation is)\s+(.+?)(?:\.|,|$)", re.IGNORECASE),
+    ],
+    "school": [
+        re.compile(r"\b(?:my school is|i go to)\s+(.+?)(?:\.|,|$)", re.IGNORECASE),
+    ],
+    "university": [
+        re.compile(r"\b(?:my university is|i study at)\s+(.+?)(?:\.|,|$)", re.IGNORECASE),
+    ],
+    "company": [
+        re.compile(r"\b(?:my company is|i work at)\s+(.+?)(?:\.|,|$)", re.IGNORECASE),
+    ],
+    "relationship_status": [
+        re.compile(
+            r"\b(?:i am|my relationship status is)\s+"
+            r"(single|married|engaged|divorced|dating|widowed)\b",
+            re.IGNORECASE,
+        ),
+    ],
 }
 
 # ---------------------------------------------------------------------------
@@ -98,9 +104,10 @@ def extract_attribute(text: str) -> str | None:
         >>> extract_attribute("What is the weather?")
         None
     """
-    for attr, pattern in _ATTRIBUTE_PATTERNS.items():
-        if pattern.search(text):
-            return attr
+    for attr, patterns in _ATTRIBUTE_PATTERNS.items():
+        for pattern in patterns:
+            if pattern.search(text):
+                return attr
     return None
 
 
@@ -108,6 +115,7 @@ async def resolve_conflict(
     memory_text: str,
     chroma_service: Any,
     archive_fn: Any,
+    attribute_hint: str | None = None,
 ) -> dict[str, Any]:
     """Detect and resolve single-value attribute conflicts.
 
@@ -116,6 +124,8 @@ async def resolve_conflict(
         chroma_service:  A ``ChromaService`` instance for metadata lookups.
         archive_fn:   An async callable ``archive_fn(memory_id)`` that
                       archives a memory (e.g. ``MemoryEvolutionService.archive_memory``).
+        attribute_hint:  Optional attribute override (e.g. from evaluator metadata).
+                         When provided and text-based extraction fails, this hint is used.
 
     Returns:
         A dict with keys:
@@ -126,6 +136,9 @@ async def resolve_conflict(
         - ``error`` (str or None) — error message if resolution failed.
     """
     attribute = extract_attribute(memory_text)
+    if attribute is None and attribute_hint is not None:
+        attribute = attribute_hint
+
     if attribute is None or attribute not in SINGLE_VALUE_ATTRIBUTES:
         return {
             "attribute": attribute,

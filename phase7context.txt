@@ -1,355 +1,242 @@
-# Aetheris – Phase 9: Hierarchical Memory Architecture
+# Aetheris – Memory Persistence Fix (Non-Breaking Patch)
 
-You are a Principal AI Systems Architect.
+You are a Senior AI Systems Engineer working on Aetheris.
 
-This is NOT a feature request.
+This is **NOT** a new feature.
 
-This is a core architectural redesign of the memory hierarchy.
+This is **NOT** an architectural redesign.
 
-Do NOT redesign unrelated systems.
+This is a **bug fix**.
 
-Do NOT modify the LLM provider layer.
+Your objective is to fix **only one issue** while preserving the entire existing architecture.
 
-Do NOT remove existing functionality.
+Do **NOT** modify:
 
-Your task is to separate memory into independent layers and ensure the Cognitive Request Router chooses the correct memory source for every query.
+- Memory Hierarchy
+- Reflection Engine
+- Cognitive Request Router
+- Context Builder
+- Prompt Builder
+- LLM Provider
+- Session Memory
+- Conversation Memory
+- Response Generation
+- Retrieval Logic
+- Embedding Pipeline
+- API Endpoints
+- UI
+- Performance
+- Existing functionality
 
----
+Everything currently works correctly.
 
-# Problem
+The system is fast, optimized, and stable.
 
-Currently Aetheris treats all memories as one collection.
-
-As a result:
-
-* Old long-term memories leak into simple conversations.
-* Current conversation is confused with historical memories.
-* Personal memories appear in unrelated questions.
-* "What was our previous conversation?" incorrectly searches long-term memory.
-* Simple math questions include unrelated user facts.
-
-This architecture is incorrect.
-
----
-
-# Objective
-
-Separate memory into three completely independent systems.
-
-Each system has a distinct purpose.
-
-The router must decide which one to use.
+Only fix the memory persistence bug.
 
 ---
 
-# Memory Layer 1 – Short-Term Conversation Memory
+# Current Bug
 
-Purpose
+During an active session:
 
-Store only the current conversation.
+User:
+> Don't call me John Paul anymore.
+> Call me Creator.
 
-Contains
+Aetheris correctly follows the instruction.
 
-* user messages
-* assistant replies
+However, after restarting Aetheris:
 
-Capacity
+it retrieves the old memory
 
-Configurable
+"John Paul"
 
-Default
+instead of
 
-20 exchanges
+"Creator".
 
-This memory is temporary.
-
-When a new conversation begins,
-
-old conversation history should not automatically be reused.
+This indicates that the update is applied only to the current conversation/session and is **not being permanently committed to long-term memory**.
 
 ---
 
-# Short-Term Queries
+# Goal
 
-Examples
+When a user changes an existing memory, the change must persist across application restarts.
 
-"What did I ask before?"
-
-"What was our previous conversation?"
-
-"What was your last answer?"
-
-These queries must search ONLY Short-Term Conversation Memory.
-
-Never search ChromaDB.
+Nothing else should change.
 
 ---
 
-# Memory Layer 2 – Long-Term User Memory
+# Scope
 
-Purpose
+Only fix persistent memory updates.
 
-Store persistent user facts.
+Do not redesign the memory system.
 
-Examples
+Do not introduce new memory types.
 
-* Name
-* Preferences
-* Favorite Language
-* Current Project
-* Birthday
-* Food Preferences
-* Goals
+Do not change retrieval ranking.
 
-Storage
-
-ChromaDB
-
-This memory persists across sessions.
+Do not modify embeddings unless required for consistency.
 
 ---
 
-# Long-Term Queries
+# Required Behaviour
 
-Examples
+Example
 
-"What is my favorite language?"
+Current Memory
 
-"What project am I am building?"
+Name = John Paul
+
+User
+
+"Call me Creator."
+
+Expected Flow
+
+Conversation Memory
+↓
+
+Memory Update Intent Detected
+↓
+
+Locate Existing Active Memory
+↓
+
+Replace / Archive Existing Value
+↓
+
+Persist New Value
+↓
+
+Update Embedding (if applicable)
+↓
+
+Invalidate Cached Memory
+↓
+
+Future Retrieval Returns
+
+Creator
+
+even after restarting Aetheris.
+
+---
+
+# Update Rules
+
+The system should recognize update intents such as:
+
+- My name is ...
+- Call me ...
+- Refer to me as ...
+- Don't call me ...
+- Change my name to ...
+- Update my name to ...
+
+When such an intent is detected:
+
+- Update the existing memory.
+- Do not create duplicate active memories.
+- Ensure only one active value exists for that memory category.
+
+---
+
+# Persistence
+
+Verify that every successful memory update is written to the persistent storage currently used by Aetheris.
+
+If SQLite is used as the source of truth:
+
+- update SQLite
+
+If ChromaDB stores semantic memories:
+
+- update or regenerate the corresponding vector entry only if required.
+
+Both stores must remain synchronized.
+
+---
+
+# Cache Handling
+
+If the Memory Service maintains an in-memory cache:
+
+After a successful update:
+
+- invalidate affected cache entries
+- reload updated memory when needed
+
+Do not restart the application to refresh memory.
+
+---
+
+# Memory Consistency
+
+Prevent situations like:
+
+Active Memory
+
+Name = John Paul
+
+Name = Creator
+
+Only one active value should exist.
+
+Old values may be archived if the current architecture supports versioning.
+
+---
+
+# Retrieval Verification
+
+After updating
+
+John Paul
+
+↓
+
+Creator
+
+Queries such as
 
 "What is my name?"
 
-These queries search ONLY Long-Term Memory.
+"Who am I?"
 
-Never use conversation history.
+"What do you call me?"
 
----
+must return
 
-# Memory Layer 3 – System Memory
+Creator
 
-Purpose
+both:
 
-Store information about Aetheris itself.
-
-Examples
-
-* Assistant identity
-* Capabilities
-* Version
-* Available tools
-* Personality configuration
-
-This memory must never mix with user memories.
-
----
-
-# System Queries
-
-Examples
-
-"Who are you?"
-
-"What can you do?"
-
-"What model are you using?"
-
-These queries use ONLY System Memory.
-
-Never retrieve user memories.
-
----
-
-# Cognitive Request Router
-
-Update routing.
-
-Examples
-
-User
-
-"What was our previous conversation?"
-
-↓
-
-Conversation Memory
-
----
-
-User
-
-"What is my favorite language?"
-
-↓
-
-Long-Term Memory
-
----
-
-User
-
-"Who are you?"
-
-↓
-
-System Memory
-
----
-
-User
-
-"What project am I am building?"
-
-↓
-
-Long-Term Memory
-
----
-
-User
-
-"What did you answer two messages ago?"
-
-↓
-
-Conversation Memory
-
----
-
-# Context Builder
-
-Build prompts from only the required memory layer.
-
-Do NOT combine all memory sources.
-
-Only merge layers when explicitly required.
-
----
-
-# Conversation Reset
-
-Implement conversation sessions.
-
-Each session has:
-
-Session ID
-
-Created Time
-
-Last Activity
-
-Conversation History
-
-When a new session starts,
-
-Conversation Memory begins empty.
-
-Long-Term Memory remains unchanged.
-
----
-
-# Memory Isolation
-
-Conversation Memory
-
-must never be embedded into ChromaDB.
-
-Long-Term Memory
-
-must never automatically appear in unrelated chats.
-
-System Memory
-
-must never be editable by normal user memory commands.
-
----
-
-# Retrieval Rules
-
-Math
-
-No memories.
-
-Greeting
-
-No memories.
-
-Programming
-
-Relevant conversation only.
-
-Memory Query
-
-Long-Term Memory only.
-
-Conversation Query
-
-Conversation Memory only.
-
-System Query
-
-System Memory only.
-
----
-
-# Context Priority
-
-Highest
-
-Current User Message
-
-↓
-
-Conversation Memory
-
-↓
-
-Relevant Long-Term Memory
-
-↓
-
-System Memory
-
-Only include layers required for the request.
+- during the current session
+- after restarting Aetheris
 
 ---
 
 # Logging
 
-Log
+Add concise logs for memory updates.
 
-Selected Memory Layer
+Example
 
-Conversation Messages Used
+Memory Update Requested
 
-Long-Term Memories Used
+Category: Name
 
-System Memories Used
+Old Value: John Paul
 
-Filtering Time
+New Value: Creator
 
-Context Size
+Persistence: Success
 
----
+Cache Invalidated: Yes
 
-# Dashboard
-
-Expose
-
-GET /api/debug/memory-hierarchy
-
-Display
-
-Conversation Memory
-
-Long-Term Memory
-
-System Memory
-
-Current Session
-
-Context Used
-
-Memory Source Selected
+Embedding Updated: Yes/No
 
 ---
 
@@ -357,19 +244,15 @@ Memory Source Selected
 
 Scenario 1
 
-Conversation
-
 User
 
-5 + 5
+"My name is Creator."
 
-Then
-
-"What was our previous conversation?"
+Restart Aetheris.
 
 Expected
 
-Return only the current chat.
+Creator is retrieved.
 
 ---
 
@@ -377,77 +260,68 @@ Scenario 2
 
 User
 
-"What is my favorite language?"
+"Don't call me John Paul."
+
+Restart.
 
 Expected
 
-Search only Long-Term Memory.
+Creator is retrieved.
 
 ---
 
 Scenario 3
 
-User
+Multiple updates
 
-"Who are you?"
+John Paul
+
+↓
+
+Creator
+
+↓
+
+Pavan
+
+↓
+
+Creator
 
 Expected
 
-Use only System Memory.
+Only the latest active value is returned.
+
+No duplicate active memories.
 
 ---
 
 Scenario 4
 
-User
-
-"What is 8 × 9?"
+Restart the backend multiple times.
 
 Expected
 
-No memory retrieval.
-
-Simple mathematical response.
+The latest stored memory remains consistent.
 
 ---
 
-Scenario 5
+# Constraints
 
-User
-
-"What project am I building?"
-
-Expected
-
-Retrieve only project-related Long-Term Memory.
-
----
-
-# Performance
-
-Conversation Memory lookup
-
-Target
-
-<5 ms
-
-Long-Term Retrieval
-
-<50 ms
-
-Total Context Building
-
-<20 ms
+- Do not change the Memory Hierarchy.
+- Do not modify conversation memory.
+- Do not alter routing behaviour.
+- Do not change prompt generation.
+- Do not change response generation.
+- Do not introduce breaking API changes.
+- Do not affect performance.
+- Do not refactor unrelated modules.
+- Preserve full backward compatibility.
 
 ---
 
-# Deliverables
+# Success Criteria
 
-1. Separate memory into Conversation Memory, Long-Term User Memory, and System Memory.
-2. Update the Cognitive Request Router to choose the correct memory layer automatically.
-3. Prevent unrelated memories from leaking into responses.
-4. Ensure "previous conversation" queries search only the active conversation session.
-5. Preserve backward compatibility with the existing Memory Service.
-6. Produce a memory hierarchy diagram and document the routing logic for each query type.
+The only visible change after this patch should be:
 
-The final result should make Aetheris behave like a true cognitive system with clearly separated short-term memory, long-term memory, and self-identity, eliminating context pollution and improving response accuracy.
+When a user updates a persistent memory (such as their name or preference), Aetheris permanently saves the change, synchronizes all relevant storage layers, and consistently retrieves the updated value across future sessions and application restarts, while leaving every other subsystem unchanged.
