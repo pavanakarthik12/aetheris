@@ -208,6 +208,22 @@ def get_reasoning_pipeline() -> "ReasoningPipeline":
     return ReasoningPipeline()
 
 
+def get_external_knowledge_integration() -> "ExternalKnowledgeIntegrationService":
+    """Provide the shared External Knowledge Integration Service."""
+
+    from .services.external_knowledge.integration_service import (
+        ExternalKnowledgeIntegrationService,
+    )
+    from .services.external_knowledge.decision_layer import (
+        ExternalKnowledgeDecisionLayer,
+    )
+
+    return ExternalKnowledgeIntegrationService(
+        decision_layer=ExternalKnowledgeDecisionLayer(),
+        search_pipeline=get_search_pipeline(),
+    )
+
+
 def get_request_router(
     llm_service: "LLMService" = Depends(get_llm_service),
     memory_service: "MemoryService" = Depends(get_memory_service),
@@ -221,6 +237,7 @@ def get_request_router(
     immediate_memory_processor: "ImmediateMemoryProcessor" = Depends(get_immediate_memory_processor),
     memory_hierarchy: "MemoryHierarchyService" = Depends(get_memory_hierarchy_service),
     reasoning_pipeline: "ReasoningPipeline" = Depends(get_reasoning_pipeline),
+    external_knowledge_integration: "ExternalKnowledgeIntegrationService" = Depends(get_external_knowledge_integration),
 ) -> "CognitiveRequestRouter":
     """Provide the CognitiveRequestRouter wired to all subsystems."""
 
@@ -239,4 +256,5 @@ def get_request_router(
         immediate_memory_processor=immediate_memory_processor,
         memory_hierarchy=memory_hierarchy,
         reasoning_pipeline=reasoning_pipeline,
+        external_knowledge_integration=external_knowledge_integration,
     )

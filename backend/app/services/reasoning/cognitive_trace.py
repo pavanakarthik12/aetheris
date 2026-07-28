@@ -53,6 +53,9 @@ class CognitiveTracer:
         self._trace.needs_planning = needed
         self._trace.planning_step_count = step_count
 
+    def set_external_knowledge(self, needed: bool) -> None:
+        self._trace.needs_external_knowledge = needed
+
     def set_verification(self, passed: bool, detail: str = "") -> None:
         self._trace.verification_passed = passed
         self._trace.verification_detail = detail

@@ -17,6 +17,7 @@ from ...schemas.reasoning import (
     SemanticIntentType,
     VerificationResult,
 )
+from ..external_knowledge.decision_layer import ExternalKnowledgeDecisionLayer
 from .cognitive_trace import CognitiveTracer
 from .complexity_classifier import classify_complexity
 from .confidence_estimator import estimate_confidence
@@ -32,6 +33,7 @@ logger = logging.getLogger(__name__)
 class ReasoningPipeline:
     def __init__(self) -> None:
         self._tracer = CognitiveTracer()
+        self._external_knowledge = ExternalKnowledgeDecisionLayer()
 
     async def run(
         self,
@@ -69,6 +71,11 @@ class ReasoningPipeline:
             planning_steps = create_plan(semantic_intent, complexity, message)
         self._tracer.set_planning(needs_planning, len(planning_steps))
 
+        needs_external_knowledge = self._external_knowledge.needs_external_knowledge(
+            message, semantic_intent,
+        )
+        self._tracer.set_external_knowledge(needs_external_knowledge)
+
         confidence = estimate_confidence(semantic_intent, complexity, self._tracer.build())
         self._tracer.set_confidence(confidence)
 
@@ -81,6 +88,7 @@ class ReasoningPipeline:
             clarification_question=clarification_q,
             needs_planning=needs_planning,
             planning_steps=planning_steps,
+            needs_external_knowledge=needs_external_knowledge,
             confidence=confidence,
         )
 
@@ -89,12 +97,13 @@ class ReasoningPipeline:
         elapsed = (perf_counter() - started) * 1000
         logger.info(
             "Reasoning pipeline | intent=%s | complexity=%s | tasks=%d | "
-            "clarification=%s | planning=%s | confidence=%s | duration_ms=%.2f",
+            "clarification=%s | planning=%s | ext_knowledge=%s | confidence=%s | duration_ms=%.2f",
             semantic_intent.value,
             complexity.value,
             len(tasks),
             needs_clarification,
             needs_planning,
+            needs_external_knowledge,
             confidence.value,
             elapsed,
         )

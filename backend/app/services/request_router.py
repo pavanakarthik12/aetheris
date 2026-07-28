@@ -18,6 +18,7 @@ from ..schemas.reasoning import CognitiveTrace, ReasoningPlan, SemanticIntentTyp
 from .chroma_service import ChromaService
 from .context_builder import ContextBuilderService
 from .embedding_service import EmbeddingService
+from .external_knowledge.integration_service import ExternalKnowledgeIntegrationService
 from .immediate_memory_processor import ImmediateMemoryProcessor
 from .intent_classifier import IntentClassifier
 from .greeting_handler import detect_greeting
@@ -65,6 +66,7 @@ class CognitiveRequestRouter:
         immediate_memory_processor: ImmediateMemoryProcessor,
         memory_hierarchy: MemoryHierarchyService | None = None,
         reasoning_pipeline: ReasoningPipeline | None = None,
+        external_knowledge_integration: ExternalKnowledgeIntegrationService | None = None,
     ) -> None:
         self._llm = llm_service
         self._memory_service = memory_service
@@ -81,6 +83,7 @@ class CognitiveRequestRouter:
         self._metrics = MetricsCollector()
         self._memory_hierarchy = memory_hierarchy
         self._reasoning = reasoning_pipeline
+        self._external_knowledge = external_knowledge_integration
 
     async def route(
         self,
@@ -263,6 +266,7 @@ class CognitiveRequestRouter:
         steps: list[RouteStep],
         debug: RouterDebugifier,
         classification: IntentClassification | None = None,
+        reasoning_plan: ReasoningPlan | None = None,
     ) -> RouterResult:
         imm_result = await self._run_imm(message, steps)
         if imm_result.action in (MemoryActionType.CREATE, MemoryActionType.UPDATE, MemoryActionType.MERGE):
@@ -270,6 +274,14 @@ class CognitiveRequestRouter:
 
         memories = await self._retrieve_memories(message, steps)
         memory_context = self._build_context(memories, steps, query=message)
+
+        memory_context, ext_system_prompt = await self._inject_external_knowledge(
+            message=message,
+            memory_context=memory_context,
+            reasoning_plan=reasoning_plan,
+            steps=steps,
+        )
+
         injected_count = self._count_injected(memory_context)
 
         budget = select_budget(
@@ -282,6 +294,7 @@ class CognitiveRequestRouter:
             message=message,
             memory_context=memory_context,
             steps=steps,
+            system_prompt=ext_system_prompt,
             max_tokens=budget.max_tokens,
             temperature=budget.temperature,
         )
@@ -869,6 +882,13 @@ class CognitiveRequestRouter:
             memories = await self._retrieve_memories(message, steps)
             memory_context = self._build_context(memories, steps, query=message)
 
+        memory_context, ext_system_prompt = await self._inject_external_knowledge(
+            message=message,
+            memory_context=memory_context,
+            reasoning_plan=reasoning_plan,
+            steps=steps,
+        )
+
         injected_count = self._count_injected(memory_context)
 
         budget = select_budget(
@@ -882,6 +902,7 @@ class CognitiveRequestRouter:
                 message=message,
                 memory_context=memory_context,
                 steps=steps,
+                system_prompt=ext_system_prompt,
                 max_tokens=budget.max_tokens,
                 temperature=budget.temperature,
             )
@@ -890,6 +911,7 @@ class CognitiveRequestRouter:
                 message=message,
                 memory_context=memory_context,
                 steps=steps,
+                system_prompt=ext_system_prompt,
                 max_tokens=budget.max_tokens,
                 temperature=budget.temperature,
             )
@@ -1305,6 +1327,57 @@ class CognitiveRequestRouter:
             memory_action=MemoryActionType.SKIP,
             memory_success=True,
         )
+
+    async def _inject_external_knowledge(
+        self,
+        message: str,
+        memory_context: str,
+        reasoning_plan: ReasoningPlan | None,
+        steps: list[RouteStep],
+    ) -> tuple[str, str | None]:
+        if reasoning_plan is None or not reasoning_plan.needs_external_knowledge:
+            return memory_context, None
+
+        if self._external_knowledge is None:
+            return memory_context, None
+
+        ext_result = await self._external_knowledge.execute(
+            message=message,
+            semantic_intent=reasoning_plan.semantic_intent,
+        )
+
+        steps.append(RouteStep(
+            subsystem="ExternalKnowledgeIntegration",
+            action="search" if ext_result.triggered else "skip",
+            duration_ms=ext_result.execution_time_ms,
+            success=ext_result.success,
+            detail=(
+                f"triggered={ext_result.triggered} success={ext_result.success} "
+                f"results={ext_result.result_count}"
+                + (f" error={ext_result.error}" if ext_result.error else "")
+            ),
+        ))
+
+        if not ext_result.triggered or not ext_result.success or not ext_result.context_block:
+            return memory_context, None
+
+        combined = memory_context.strip()
+        if combined:
+            combined = f"{combined}\n\n{ext_result.context_block}"
+        else:
+            combined = ext_result.context_block
+
+        base_prompt = self._prompt_builder.chat_system()
+        modified_prompt = f"{base_prompt}\n\n{ext_result.instruction}"
+
+        logger.info(
+            "External knowledge injected | results=%d | context_size=%d | duration_ms=%.2f",
+            ext_result.result_count,
+            len(combined),
+            ext_result.execution_time_ms,
+        )
+
+        return combined, modified_prompt
 
     @staticmethod
     def _count_injected(memory_context: str) -> int:

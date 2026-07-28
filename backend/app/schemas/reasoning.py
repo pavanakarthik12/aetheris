@@ -70,6 +70,7 @@ class ReasoningPlan(BaseModel):
     clarification_question: str = Field(default="")
     needs_planning: bool = Field(default=False)
     planning_steps: list[str] = Field(default_factory=list)
+    needs_external_knowledge: bool = Field(default=False)
     confidence: ConfidenceLevel = Field(default=ConfidenceLevel.HIGH)
 
 
@@ -84,6 +85,7 @@ class CognitiveTrace(BaseModel):
     needs_clarification: bool = Field(default=False)
     needs_planning: bool = Field(default=False)
     planning_step_count: int = Field(default=0)
+    needs_external_knowledge: bool = Field(default=False)
     verification_passed: bool = Field(default=True)
     verification_detail: str = Field(default="")
     confidence: ConfidenceLevel = Field(default=ConfidenceLevel.HIGH)

@@ -1,282 +1,342 @@
-# Aetheris – Phase 11.1: External Knowledge Provider Architecture (Tavily)
+# Aetheris – Phase 11.3: External Knowledge Integration with Cognitive Reasoning Engine
 
 You are a Principal AI Systems Architect.
 
-This is NOT a feature request.
+This phase integrates the existing External Knowledge Search Pipeline into Aetheris' Cognitive Reasoning Engine.
 
-This is NOT an architectural redesign.
+Do NOT redesign the architecture.
 
-This is the first implementation of Aetheris' External Knowledge Layer.
+Do NOT modify the existing Memory System.
 
-The existing architecture is complete and must remain unchanged.
+Do NOT modify the Reflection Engine.
 
-Current Architecture
+Do NOT modify the Context Builder.
 
-- FastAPI Backend
+Do NOT modify the Prompt Builder.
+
+Do NOT modify the LLM Provider Layer.
+
+Do NOT modify the External Knowledge Provider architecture.
+
+Everything implemented in previous phases is stable and must remain backward compatible.
+
+---
+
+# Existing Components
+
+The following modules already exist:
+
 - Cognitive Request Router
 - Cognitive Reasoning Engine
 - Memory Hierarchy
-- Session Memory
-- Long-Term Memory
-- System Memory
 - Reflection Engine
 - Context Builder
 - Prompt Builder
-- Memory CRUD
-- Memory Persistence
 - LLM Provider Layer
+- Provider Manager
+- Tavily Provider
+- External Search Pipeline
 
-Everything currently works correctly.
-
-Do NOT modify any existing functionality.
-
-Do NOT break any APIs.
-
-Do NOT redesign the reasoning engine.
-
-Only extend the architecture by introducing an External Knowledge Provider layer.
+These modules must continue working exactly as before.
 
 ---
 
 # Objective
 
-Aetheris must support external knowledge providers.
+The Cognitive Reasoning Engine should intelligently decide whether a user's request requires external knowledge.
 
-Tavily will be the first provider.
+If external knowledge is required, it should execute a search using the existing Search Pipeline and provide the retrieved information to the LLM.
 
-However,
+This decision must happen automatically.
 
-the Reasoning Engine must NEVER know that Tavily exists.
-
-It should communicate only with an abstract provider interface.
-
-Future providers should be pluggable without changing any reasoning logic.
+No user action should be required.
 
 ---
 
-# Design Principles
+# Decision Layer
 
-Implement a provider-based architecture.
+Before building the final prompt, the Reasoning Engine must classify every request into one of two categories.
 
-Avoid hardcoded integrations.
+Category A
 
-Follow the same abstraction approach already used for the LLM Provider Layer.
+No external knowledge required.
 
-The External Knowledge Layer should be modular and extensible.
+Examples
 
----
+- Explain binary search.
+- What is polymorphism?
+- Reverse a linked list.
+- Write a Java program.
+- Explain machine learning.
 
-# Architecture
+These should behave exactly as they do today.
 
-Create a new module
-
-services/
-
-    external_knowledge/
-
-        __init__.py
-
-        base_provider.py
-
-        provider_manager.py
-
-        tavily_provider.py
+No search should occur.
 
 ---
 
-# Base Provider
+Category B
 
-Create an abstract base class.
+External knowledge required.
 
-Responsibilities
+Examples
 
-- Define the common interface for all search providers.
-- Do not contain provider-specific logic.
-- Support future providers without modification.
+- Latest FastAPI version
+- Today's weather
+- OpenAI latest news
+- NVIDIA stock today
+- IPL points table
+- Python 3.14 release notes
+- Recent AI announcements
+- Current Prime Minister of...
+- Latest React version
 
-Example responsibilities
-
-- search()
-- health_check()
-- provider_name()
-
-Keep the interface generic.
-
----
-
-# Tavily Provider
-
-Implement the first concrete provider.
-
-Responsibilities
-
-- Read the API key from environment variables.
-- Validate configuration.
-- Communicate with Tavily.
-- Return normalized search results.
-
-Do not expose Tavily-specific response formats to the rest of the application.
-
-Convert responses into Aetheris' internal format.
+These should trigger the Search Pipeline.
 
 ---
 
-# Internal Search Result Format
+# External Knowledge Trigger
 
-Normalize every provider into a common structure.
+Implement lightweight decision logic.
 
-Each result should contain
+Search should trigger when requests involve
 
-- title
-- url
-- snippet
-- content (if available)
-- source
-- score (if supported)
+- latest
+- current
+- today
+- yesterday
+- this week
+- this month
+- recent
+- news
+- update
+- release
+- documentation
+- API changes
+- version
+- live information
+- internet lookup
 
-Future providers must return the same format.
-
----
-
-# Provider Manager
-
-Create a Provider Manager.
-
-Responsibilities
-
-- Initialize providers.
-- Validate API keys.
-- Expose the active provider.
-- Allow future provider switching.
-- Hide provider implementation details.
-
-The rest of Aetheris should interact only with the Provider Manager.
-
-Never directly instantiate Tavily elsewhere.
+The trigger should be modular and easily replaceable by a more advanced classifier in future phases.
 
 ---
 
-# Environment Variables
+# Search Flow
 
-Read
+When external knowledge is required
 
-TAVILY_API_KEY
+User
 
-If missing
+↓
 
-- log a clear warning
-- disable Tavily gracefully
-- do not crash the application
+Reasoning Engine
+
+↓
+
+Search Pipeline
+
+↓
+
+Normalized Search Results
+
+↓
+
+Context Builder
+
+↓
+
+Prompt Builder
+
+↓
+
+LLM
+
+↓
+
+Final Response
+
+The Reasoning Engine must not communicate with Tavily directly.
+
+It must only interact with the Search Pipeline.
 
 ---
 
-# Configuration
+# Context Injection
 
-Centralize provider configuration.
+Use only the normalized search results.
 
-Avoid scattered environment lookups.
+Never expose provider-specific JSON to the LLM.
 
-Prepare for future providers such as
+Construct a clean external context section.
 
-- Brave Search
-- Serper
-- Wikipedia
-- GitHub
-- News APIs
+Example
 
-without requiring architectural changes.
+External Knowledge
+
+Source 1
+
+Title
+
+Snippet
+
+URL
 
 ---
 
-# Error Handling
+Source 2
 
-Handle
+Title
 
-- Missing API key
-- Invalid API key
-- Network failure
-- Timeout
-- Empty results
-- API rate limits
+Snippet
 
-Return standardized errors.
+URL
 
-Never expose raw provider exceptions.
+---
+
+Append this section to the existing prompt generated by the Context Builder.
+
+Do not replace the existing prompt.
+
+Enhance it.
+
+---
+
+# LLM Instructions
+
+When external knowledge is available, instruct the LLM to
+
+- prioritize retrieved information
+- combine it with its own reasoning
+- admit uncertainty if the search results are insufficient
+- never fabricate facts that are absent from both memory and search results
+
+---
+
+# Search Failure Handling
+
+If the search fails
+
+Continue the conversation.
+
+Do not terminate the request.
+
+The LLM should answer using its own knowledge.
+
+Log the failure.
+
+Never expose internal errors.
 
 ---
 
 # Logging
 
-Log
+Record
 
-Provider Initialized
+Timestamp
 
-Provider Name
+Decision
 
-Search Request
+Search Triggered
 
-Search Duration
+Query
+
+Provider
+
+Execution Time
+
+Search Success
 
 Result Count
 
-Provider Errors
+Prompt Size
 
-Initialization Status
+LLM Response Time
 
----
-
-# Health Check
-
-Expose a lightweight health check for the provider.
-
-The application should know whether Tavily is currently available.
-
-Failure should not affect the rest of Aetheris.
+This information should assist future optimization.
 
 ---
 
 # Constraints
 
-Do NOT modify
+Do NOT implement
 
-- Cognitive Reasoning Engine
-- Memory System
-- Context Builder
-- Prompt Builder
-- Reflection Engine
-- Existing API routes
-- Existing LLM Provider Layer
+- Search ranking
+- Summarization
+- Search caching
+- Multi-provider orchestration
+- Citation generation
+- Automatic memory creation from search
+- Search history
+- Background indexing
 
-Do NOT perform searches automatically.
-
-This phase is only responsible for creating the provider architecture.
-
-Search execution will be implemented in the next phase.
+These belong to future phases.
 
 ---
 
-# Performance
+# Testing
 
-Provider initialization should occur once during application startup.
+The following queries should NOT trigger search
 
-Avoid repeated initialization.
+Explain Quick Sort.
 
-Use dependency injection where appropriate.
+What is Object Oriented Programming?
+
+Reverse an Array.
+
+Difference between HashMap and HashSet.
+
+Write Merge Sort in Java.
+
+Expected
+
+No external search.
 
 ---
 
-# Deliverables
+The following queries SHOULD trigger search
 
-Implement a modular External Knowledge Provider architecture.
+Latest FastAPI version.
 
-Implement Tavily as the first provider.
+OpenAI latest news.
 
-Normalize all provider responses into a common internal format.
+Today's weather in Hyderabad.
 
-Implement a Provider Manager responsible for provider lifecycle management.
+React latest release.
 
-Ensure the rest of Aetheris remains completely unaware of provider-specific implementations.
+Current Java LTS version.
 
-Maintain full backward compatibility with the existing architecture.
+Expected
 
-The final result should establish a scalable External Knowledge Layer that allows additional providers to be integrated in the future with minimal effort, while keeping Tavily as the first supported implementation.
+Search Pipeline executes.
+
+Search results are injected into the prompt.
+
+LLM produces an answer using retrieved information.
+
+---
+
+Search Failure Test
+
+Disconnect the internet.
+
+Ask
+
+Latest Python version.
+
+Expected
+
+Search fails gracefully.
+
+The conversation continues.
+
+The LLM answers using existing knowledge while indicating that live information could not be retrieved.
+
+---
+
+Deliverables
+
+Integrate the existing Search Pipeline into the Cognitive Reasoning Engine by introducing an automatic decision layer that determines when external knowledge is required.
+
+When triggered, the system should execute the existing Search Pipeline, inject normalized search results into the Context Builder, and allow the LLM to generate responses using both retrieved information and its own reasoning.
+
+The implementation must preserve the current architecture, remain provider-independent, and avoid introducing ranking, summarization, caching, or other optimization features.
