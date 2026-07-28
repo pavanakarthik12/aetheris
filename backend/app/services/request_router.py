@@ -14,12 +14,14 @@ from ..schemas.routing import (
     RouterDebugInfo,
     RouterResult,
 )
+from ..schemas.reasoning import CognitiveTrace, ReasoningPlan, SemanticIntentType
 from .chroma_service import ChromaService
 from .context_builder import ContextBuilderService
 from .embedding_service import EmbeddingService
 from .immediate_memory_processor import ImmediateMemoryProcessor
 from .intent_classifier import IntentClassifier
 from .greeting_handler import detect_greeting
+from .reasoning.pipeline import ReasoningPipeline
 from .llm_service import (
     LLMService,
     LLMServiceError,
@@ -62,6 +64,7 @@ class CognitiveRequestRouter:
         intent_classifier: IntentClassifier,
         immediate_memory_processor: ImmediateMemoryProcessor,
         memory_hierarchy: MemoryHierarchyService | None = None,
+        reasoning_pipeline: ReasoningPipeline | None = None,
     ) -> None:
         self._llm = llm_service
         self._memory_service = memory_service
@@ -77,6 +80,7 @@ class CognitiveRequestRouter:
         self._cache = MemorySearchCache()
         self._metrics = MetricsCollector()
         self._memory_hierarchy = memory_hierarchy
+        self._reasoning = reasoning_pipeline
 
     async def route(
         self,
@@ -109,11 +113,49 @@ class CognitiveRequestRouter:
         classification = await self._classify(message, steps)
         debug.set_intent(classification)
 
+        reasoning_plan: ReasoningPlan | None = None
+        cognitive_trace: CognitiveTrace | None = None
+        if self._reasoning is not None:
+            reasoning_started = perf_counter()
+            plan, trace = await self._reasoning.run(message)
+            reasoning_plan = plan
+            cognitive_trace = trace
+            elapsed = (perf_counter() - reasoning_started) * 1000
+            steps.append(RouteStep(
+                subsystem="ReasoningPipeline",
+                action="reason",
+                duration_ms=elapsed,
+                success=True,
+                detail=(
+                    f"intent={plan.semantic_intent.value} "
+                    f"complexity={plan.complexity.value} "
+                    f"tasks={len(plan.tasks)} "
+                    f"clarification={plan.needs_clarification} "
+                    f"planning={plan.needs_planning} "
+                    f"confidence={plan.confidence.value}"
+                ),
+            ))
+
+            if reasoning_plan.needs_clarification:
+                elapsed = (perf_counter() - started_at) * 1000
+                debug.set_duration(elapsed)
+                debug.set_steps(steps)
+                debug.set_cognitive_trace(cognitive_trace)
+                result = RouterResult(
+                    response=reasoning_plan.clarification_question,
+                    memory_count=0,
+                    memory_action=MemoryActionType.SKIP,
+                    memory_success=True,
+                    debug=debug.build(),
+                )
+                result.debug = debug.build()
+                return result
+
         subsystems: list[str] = []
 
         try:
             if classification.primary_intent == IntentType.NORMAL_CHAT:
-                result = await self._handle_with_hierarchy(message, steps, debug, classification)
+                result = await self._handle_with_hierarchy(message, steps, debug, classification, reasoning_plan)
                 subsystems = ["MemoryHierarchy", "ImmediateMemoryProcessor", "LLM"]
 
             elif classification.primary_intent == IntentType.CONVERSATION_QUERY:
@@ -153,7 +195,7 @@ class CognitiveRequestRouter:
                 subsystems = classification.metadata.get("subsystems", ["LLM"])
 
             else:
-                result = await self._handle_with_hierarchy(message, steps, debug, classification)
+                result = await self._handle_with_hierarchy(message, steps, debug, classification, reasoning_plan)
                 subsystems = ["MemoryHierarchy", "ImmediateMemoryProcessor", "LLM"]
 
         except Exception as exc:
@@ -172,6 +214,19 @@ class CognitiveRequestRouter:
         debug.set_duration(total_ms)
         debug.set_subsystems(subsystems)
         debug.set_steps(steps)
+
+        if self._reasoning is not None and cognitive_trace is not None:
+            vr = await self._reasoning.verify_response(message, result.response)
+            cognitive_trace.verification_passed = vr.passed
+            cognitive_trace.verification_detail = vr.detail
+            if not vr.passed:
+                steps.append(RouteStep(
+                    subsystem="ResponseVerification",
+                    action="verify",
+                    success=False,
+                    detail=vr.detail,
+                ))
+            debug.set_cognitive_trace(cognitive_trace)
 
         result.debug = debug.build()
         return result
@@ -789,6 +844,7 @@ class CognitiveRequestRouter:
         steps: list[RouteStep],
         debug: RouterDebugifier,
         classification: IntentClassification | None = None,
+        reasoning_plan: ReasoningPlan | None = None,
     ) -> RouterResult:
         imm_result = await self._run_imm(message, steps)
         if imm_result.action in (MemoryActionType.CREATE, MemoryActionType.UPDATE, MemoryActionType.MERGE):
@@ -1279,6 +1335,7 @@ class RouterDebugifier:
         self._lt_count: int = 0
         self._sys_count: int = 0
         self._context_size: int = 0
+        self._cognitive_trace: CognitiveTrace | None = None
 
     def set_intent(self, classification: IntentClassification) -> None:
         self._intent = classification.primary_intent
@@ -1325,6 +1382,9 @@ class RouterDebugifier:
     def set_context_size(self, size: int) -> None:
         self._context_size = size
 
+    def set_cognitive_trace(self, trace: CognitiveTrace | None) -> None:
+        self._cognitive_trace = trace
+
     def build(self) -> RouterDebugInfo:
         return RouterDebugInfo(
             detected_intent=self._intent,
@@ -1342,4 +1402,5 @@ class RouterDebugifier:
             long_term_memories_used=self._lt_count,
             system_memories_used=self._sys_count,
             context_size_chars=self._context_size,
+            cognitive_trace=self._cognitive_trace,
         )

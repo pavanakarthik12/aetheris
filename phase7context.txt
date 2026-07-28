@@ -1,242 +1,517 @@
-# Aetheris – Memory Persistence Fix (Non-Breaking Patch)
+# Aetheris – Phase 10: Cognitive Reasoning Engine
 
-You are a Senior AI Systems Engineer working on Aetheris.
+You are a Principal AI Systems Architect.
 
-This is **NOT** a new feature.
+This is NOT a feature request.
 
-This is **NOT** an architectural redesign.
+This is NOT an architectural redesign.
 
-This is a **bug fix**.
+This is the implementation of Aetheris' Cognitive Reasoning Engine.
 
-Your objective is to fix **only one issue** while preserving the entire existing architecture.
+The existing architecture is stable and must remain unchanged.
 
-Do **NOT** modify:
+Current Components
 
-- Memory Hierarchy
-- Reflection Engine
+- FastAPI Backend
 - Cognitive Request Router
-- Context Builder
-- Prompt Builder
-- LLM Provider
+- Memory Hierarchy
 - Session Memory
-- Conversation Memory
-- Response Generation
-- Retrieval Logic
-- Embedding Pipeline
-- API Endpoints
-- UI
-- Performance
-- Existing functionality
+- Long-Term Memory
+- System Memory
+- Reflection Engine
+- Context Builder
+- Memory CRUD
+- Memory Persistence
+- Prompt Builder
+- LLM Provider Layer
 
 Everything currently works correctly.
 
-The system is fast, optimized, and stable.
+Do NOT break any existing functionality.
 
-Only fix the memory persistence bug.
+Do NOT modify APIs unless absolutely necessary.
 
----
+Do NOT redesign memory.
 
-# Current Bug
+Do NOT change the response generation pipeline.
 
-During an active session:
-
-User:
-> Don't call me John Paul anymore.
-> Call me Creator.
-
-Aetheris correctly follows the instruction.
-
-However, after restarting Aetheris:
-
-it retrieves the old memory
-
-"John Paul"
-
-instead of
-
-"Creator".
-
-This indicates that the update is applied only to the current conversation/session and is **not being permanently committed to long-term memory**.
+Only extend the architecture by introducing a reasoning layer before the LLM.
 
 ---
 
-# Goal
+# Objective
 
-When a user changes an existing memory, the change must persist across application restarts.
-
-Nothing else should change.
-
----
-
-# Scope
-
-Only fix persistent memory updates.
-
-Do not redesign the memory system.
-
-Do not introduce new memory types.
-
-Do not change retrieval ranking.
-
-Do not modify embeddings unless required for consistency.
-
----
-
-# Required Behaviour
-
-Example
-
-Current Memory
-
-Name = John Paul
+Currently the processing pipeline is approximately
 
 User
 
-"Call me Creator."
-
-Expected Flow
-
-Conversation Memory
 ↓
 
-Memory Update Intent Detected
+Memory Retrieval
+
 ↓
 
-Locate Existing Active Memory
+Prompt Builder
+
 ↓
 
-Replace / Archive Existing Value
+LLM
+
 ↓
 
-Persist New Value
+Response
+
+The objective is to transform it into
+
+User
+
 ↓
 
-Update Embedding (if applicable)
+Intent Analysis
+
 ↓
 
-Invalidate Cached Memory
+Reasoning Engine
+
 ↓
 
-Future Retrieval Returns
+Decision Engine
 
-Creator
+↓
 
-even after restarting Aetheris.
+Memory Selection
+
+↓
+
+Context Builder
+
+↓
+
+Prompt Builder
+
+↓
+
+LLM
+
+↓
+
+Verification
+
+↓
+
+Final Response
+
+The Reasoning Engine should determine HOW to solve a request before asking the LLM.
 
 ---
 
-# Update Rules
+# Design Principles
 
-The system should recognize update intents such as:
+The Reasoning Engine must NOT generate answers.
 
-- My name is ...
-- Call me ...
-- Refer to me as ...
-- Don't call me ...
-- Change my name to ...
-- Update my name to ...
+It should only make decisions.
 
-When such an intent is detected:
+The LLM remains responsible for generating natural language.
 
-- Update the existing memory.
-- Do not create duplicate active memories.
-- Ensure only one active value exists for that memory category.
+The Reasoning Engine decides
 
----
-
-# Persistence
-
-Verify that every successful memory update is written to the persistent storage currently used by Aetheris.
-
-If SQLite is used as the source of truth:
-
-- update SQLite
-
-If ChromaDB stores semantic memories:
-
-- update or regenerate the corresponding vector entry only if required.
-
-Both stores must remain synchronized.
+- what information is needed
+- whether memory is needed
+- whether clarification is required
+- whether reasoning is simple or complex
+- whether the request should proceed immediately
 
 ---
 
-# Cache Handling
+# Module 1 – Intent Analyzer
 
-If the Memory Service maintains an in-memory cache:
+Implement an Intent Analyzer.
 
-After a successful update:
+Every request must first be classified.
 
-- invalidate affected cache entries
-- reload updated memory when needed
+Examples
 
-Do not restart the application to refresh memory.
+Simple Question
+
+Programming
+
+Memory Retrieval
+
+Conversation Continuation
+
+Explanation
+
+Planning
+
+Creative Writing
+
+Code Generation
+
+Debugging
+
+Reasoning
+
+Mathematics
+
+General Conversation
+
+Greeting
+
+Unknown
+
+Intent classification should be lightweight and deterministic where possible.
+
+Avoid unnecessary LLM calls.
 
 ---
 
-# Memory Consistency
+# Module 2 – Complexity Classifier
 
-Prevent situations like:
+Determine how difficult the request is.
 
-Active Memory
+Three levels
 
-Name = John Paul
+Simple
 
-Name = Creator
+Medium
 
-Only one active value should exist.
+Complex
 
-Old values may be archived if the current architecture supports versioning.
+Examples
+
+Simple
+
+2 + 2
+
+Greeting
+
+Definition
+
+Medium
+
+Programming explanation
+
+Memory retrieval
+
+Summarization
+
+Complex
+
+System design
+
+Architecture planning
+
+Large coding tasks
+
+Research planning
+
+Complex requests should activate additional reasoning stages.
+
+Simple requests should bypass unnecessary processing.
 
 ---
 
-# Retrieval Verification
+# Module 3 – Task Decomposer
 
-After updating
+If a request contains multiple objectives,
 
-John Paul
+split it into independent tasks.
+
+Example
+
+"Build a login page and explain JWT authentication."
 
 ↓
 
-Creator
+Task 1
 
-Queries such as
+Login Page
 
-"What is my name?"
+Task 2
 
-"Who am I?"
+JWT Explanation
 
-"What do you call me?"
+The decomposition should remain internal.
 
-must return
+The user should receive a unified response.
 
-Creator
+---
 
-both:
+# Module 4 – Decision Engine
 
-- during the current session
-- after restarting Aetheris
+Before retrieving memory,
+
+determine
+
+Need Conversation Memory?
+
+Yes / No
+
+Need Long-Term Memory?
+
+Yes / No
+
+Need System Memory?
+
+Yes / No
+
+Need Reflection?
+
+Yes / No
+
+Need Clarification?
+
+Yes / No
+
+Need Planning?
+
+Yes / No
+
+The Decision Engine should minimize unnecessary work.
+
+---
+
+# Module 5 – Clarification Engine
+
+Do not guess.
+
+If required information is missing,
+
+ask concise clarification questions.
+
+Example
+
+"Build me a website."
+
+↓
+
+Clarify
+
+Portfolio?
+
+Dashboard?
+
+E-commerce?
+
+Avoid asking questions when reasonable assumptions can be made.
+
+---
+
+# Module 6 – Planning Engine
+
+For medium and complex requests,
+
+create an internal execution plan.
+
+The plan should never be exposed to the user.
+
+Example
+
+Understand Request
+
+↓
+
+Retrieve Required Context
+
+↓
+
+Determine Solution Strategy
+
+↓
+
+Generate Prompt
+
+↓
+
+Validate Response
+
+↓
+
+Return Response
+
+---
+
+# Module 7 – Response Verification
+
+Before returning an answer,
+
+verify
+
+Did the response answer the question?
+
+Did it follow user instructions?
+
+Does it contradict memory?
+
+Is it internally consistent?
+
+Is required information missing?
+
+If verification fails,
+
+regenerate once or request clarification.
+
+---
+
+# Module 8 – Confidence Estimation
+
+Generate an internal confidence score.
+
+Examples
+
+High
+
+Known facts
+
+Math
+
+Memory retrieval
+
+Medium
+
+Programming advice
+
+Architecture
+
+Low
+
+Incomplete context
+
+Assumptions
+
+Speculation
+
+If confidence is below a configurable threshold,
+
+prefer asking the user for clarification instead of guessing.
+
+Confidence scores remain internal.
+
+---
+
+# Module 9 – Reasoning Pipeline
+
+Every request should follow
+
+Input
+
+↓
+
+Intent Analysis
+
+↓
+
+Complexity Classification
+
+↓
+
+Task Decomposition
+
+↓
+
+Decision Engine
+
+↓
+
+Memory Selection
+
+↓
+
+Planning
+
+↓
+
+Prompt Construction
+
+↓
+
+LLM
+
+↓
+
+Verification
+
+↓
+
+Final Response
+
+Simple requests should automatically skip unnecessary stages.
+
+---
+
+# Module 10 – Internal Cognitive Trace
+
+Implement an internal reasoning trace.
+
+This trace is for debugging only.
+
+It should include
+
+Intent
+
+Complexity
+
+Tasks
+
+Selected Memory Sources
+
+Planning Performed
+
+Verification Result
+
+Confidence Score
+
+Reasoning Duration
+
+The reasoning trace must never be shown to users unless explicitly enabled in debug mode.
+
+---
+
+# Performance Goals
+
+The reasoning layer must remain lightweight.
+
+Simple requests should add minimal latency.
+
+Target
+
+Simple Requests
+
+<10 ms additional processing
+
+Medium Requests
+
+<25 ms additional processing
+
+Complex Requests
+
+<50 ms additional processing
+
+Avoid unnecessary LLM calls.
+
+Prefer deterministic logic whenever possible.
 
 ---
 
 # Logging
 
-Add concise logs for memory updates.
+Log
 
-Example
+Detected Intent
 
-Memory Update Requested
+Complexity
 
-Category: Name
+Memory Sources Used
 
-Old Value: John Paul
+Planning Activated
 
-New Value: Creator
+Clarification Required
 
-Persistence: Success
+Verification Result
 
-Cache Invalidated: Yes
+Processing Time
 
-Embedding Updated: Yes/No
+Reasoning Time
 
 ---
 
@@ -246,13 +521,23 @@ Scenario 1
 
 User
 
-"My name is Creator."
-
-Restart Aetheris.
+"What is 5 + 6?"
 
 Expected
 
-Creator is retrieved.
+Intent
+
+Mathematics
+
+Complexity
+
+Simple
+
+No memory retrieval
+
+No planning
+
+Immediate response
 
 ---
 
@@ -260,68 +545,100 @@ Scenario 2
 
 User
 
-"Don't call me John Paul."
-
-Restart.
+"What project am I building?"
 
 Expected
 
-Creator is retrieved.
+Intent
+
+Memory Retrieval
+
+Long-Term Memory
+
+No planning
+
+Correct retrieval
 
 ---
 
 Scenario 3
 
-Multiple updates
+User
 
-John Paul
-
-↓
-
-Creator
-
-↓
-
-Pavan
-
-↓
-
-Creator
+"Continue our previous discussion."
 
 Expected
 
-Only the latest active value is returned.
+Conversation Intent
 
-No duplicate active memories.
+Conversation Memory
+
+No Long-Term Memory unless required
 
 ---
 
 Scenario 4
 
-Restart the backend multiple times.
+User
+
+"Design a scalable authentication system."
 
 Expected
 
-The latest stored memory remains consistent.
+Architecture Intent
+
+Complexity
+
+Complex
+
+Planning activated
+
+Structured response
+
+---
+
+Scenario 5
+
+User
+
+"Build a login page and explain JWT."
+
+Expected
+
+Task decomposition
+
+Planning
+
+Single combined response
 
 ---
 
 # Constraints
 
-- Do not change the Memory Hierarchy.
-- Do not modify conversation memory.
-- Do not alter routing behaviour.
-- Do not change prompt generation.
-- Do not change response generation.
-- Do not introduce breaking API changes.
-- Do not affect performance.
-- Do not refactor unrelated modules.
-- Preserve full backward compatibility.
+Do not redesign existing modules.
+
+Do not modify the Memory Hierarchy.
+
+Do not change Context Builder behaviour.
+
+Do not introduce internet access.
+
+Do not introduce autonomous agents.
+
+Do not implement tool calling.
+
+Do not modify memory persistence.
+
+Do not expose internal reasoning to users.
+
+Maintain full backward compatibility.
 
 ---
 
-# Success Criteria
+# Deliverables
 
-The only visible change after this patch should be:
+Implement a Cognitive Reasoning Engine that sits between the Cognitive Request Router and the Context Builder.
 
-When a user updates a persistent memory (such as their name or preference), Aetheris permanently saves the change, synchronizes all relevant storage layers, and consistently retrieves the updated value across future sessions and application restarts, while leaving every other subsystem unchanged.
+The engine should analyze intent, classify complexity, decompose tasks, decide which memory layers are required, determine whether clarification or planning is necessary, verify responses before delivery, and expose a debug-only cognitive trace.
+
+The implementation should preserve the existing architecture while making Aetheris reason about requests before generating responses.

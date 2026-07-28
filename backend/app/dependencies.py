@@ -181,6 +181,14 @@ def get_memory_hierarchy_service(
     )
 
 
+def get_reasoning_pipeline() -> "ReasoningPipeline":
+    """Provide the shared Cognitive Reasoning Pipeline."""
+
+    from .services.reasoning.pipeline import ReasoningPipeline
+
+    return ReasoningPipeline()
+
+
 def get_request_router(
     llm_service: "LLMService" = Depends(get_llm_service),
     memory_service: "MemoryService" = Depends(get_memory_service),
@@ -193,6 +201,7 @@ def get_request_router(
     intent_classifier: "IntentClassifier" = Depends(get_intent_classifier),
     immediate_memory_processor: "ImmediateMemoryProcessor" = Depends(get_immediate_memory_processor),
     memory_hierarchy: "MemoryHierarchyService" = Depends(get_memory_hierarchy_service),
+    reasoning_pipeline: "ReasoningPipeline" = Depends(get_reasoning_pipeline),
 ) -> "CognitiveRequestRouter":
     """Provide the CognitiveRequestRouter wired to all subsystems."""
 
@@ -210,4 +219,5 @@ def get_request_router(
         intent_classifier=intent_classifier,
         immediate_memory_processor=immediate_memory_processor,
         memory_hierarchy=memory_hierarchy,
+        reasoning_pipeline=reasoning_pipeline,
     )

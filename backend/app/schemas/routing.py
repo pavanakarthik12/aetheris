@@ -8,6 +8,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from .chat import MemoryActionType
+from .reasoning import CognitiveTrace
 
 
 class IntentType(str, Enum):
@@ -80,6 +81,10 @@ class RouterDebugInfo(BaseModel):
     long_term_memories_used: int = Field(default=0, description="Number of long-term memories used.")
     system_memories_used: int = Field(default=0, description="Number of system memories used.")
     context_size_chars: int = Field(default=0, description="Total context size in characters.")
+    cognitive_trace: CognitiveTrace | None = Field(
+        default=None,
+        description="Reasoning engine cognitive trace (debug mode only).",
+    )
 
 
 class RouterResult(BaseModel):
