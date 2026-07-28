@@ -68,7 +68,7 @@ class Settings:
 
     # Global LLM settings
     llm_temperature: float = 0.7
-    llm_max_tokens: int = 256
+    llm_max_tokens: int = 1024
     llm_timeout: float = 30.0
     enable_circuit_breaker: bool = True
 

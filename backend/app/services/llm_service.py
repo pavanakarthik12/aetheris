@@ -26,7 +26,7 @@ from .providers.provider_manager import ProviderManager
 
 
 class LLMService:
-    _DEFAULT_MAX_TOKENS: int = 512
+    _DEFAULT_MAX_TOKENS: int = 1024
     _DEFAULT_TEMPERATURE: float = 0.7
 
     _MAX_CONVERSATION_TURNS: int = 50
@@ -226,8 +226,18 @@ class LLMService:
             effective_temperature,
         )
 
-        return await self._provider_manager.generate(
+        response = await self._provider_manager.generate(
             messages=messages,
             max_tokens=effective_max_tokens,
             temperature=effective_temperature,
         )
+
+        self._logger.info(
+            "LLM response | provider=%s | model=%s | response_length=%d | max_tokens=%d",
+            self.provider,
+            self.model_name,
+            len(response),
+            effective_max_tokens,
+        )
+
+        return response

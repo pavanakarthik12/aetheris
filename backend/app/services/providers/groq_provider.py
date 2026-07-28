@@ -142,10 +142,36 @@ class GroqProvider(LLMProvider):
         if not isinstance(content, str) or not content.strip():
             raise ProviderMalformedResponse("Groq returned an empty response.")
 
+        finish_reason = None
+        prompt_tokens = 0
+        completion_tokens = 0
+        total_tokens = 0
+        try:
+            choice = payload_response.get("choices", [{}])[0]
+            finish_reason = choice.get("finish_reason")
+            usage = payload_response.get("usage", {})
+            prompt_tokens = usage.get("prompt_tokens", 0)
+            completion_tokens = usage.get("completion_tokens", 0)
+            total_tokens = usage.get("total_tokens", 0)
+        except (IndexError, KeyError, TypeError):
+            pass
+
         self._logger.info(
-            "Groq success | model=%s | duration_ms=%.2f",
+            "Groq success | model=%s | duration_ms=%.2f | finish_reason=%s | "
+            "prompt=%d | completion=%d | total=%d | response_length=%d",
             self._model, duration_ms,
+            finish_reason,
+            prompt_tokens, completion_tokens, total_tokens,
+            len(content),
         )
+
+        if finish_reason == "length":
+            self._logger.warning(
+                "Groq truncation detected | model=%s | max_tokens=%s | completion=%d | "
+                "finish_reason=length — response was cut off. "
+                "Consider increasing max_tokens or LLM_MAX_TOKENS.",
+                self._model, max_tokens, completion_tokens,
+            )
 
         return content.strip()
 
