@@ -181,6 +181,25 @@ def get_memory_hierarchy_service(
     )
 
 
+@lru_cache(maxsize=1)
+def get_external_knowledge_manager() -> "ExternalKnowledgeManager":
+    """Provide the shared external knowledge provider manager."""
+
+    from .services.external_knowledge import ExternalKnowledgeManager
+    from .config.settings import get_settings
+
+    settings = get_settings()
+    return ExternalKnowledgeManager(tavily_api_key=settings.tavily_api_key)
+
+
+def get_search_pipeline() -> "SearchPipeline":
+    """Provide the shared External Knowledge Search Pipeline."""
+
+    from .services.external_knowledge.search_pipeline import SearchPipeline
+
+    return SearchPipeline(manager=get_external_knowledge_manager())
+
+
 def get_reasoning_pipeline() -> "ReasoningPipeline":
     """Provide the shared Cognitive Reasoning Pipeline."""
 

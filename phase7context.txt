@@ -1,4 +1,4 @@
-# Aetheris – Phase 10: Cognitive Reasoning Engine
+# Aetheris – Phase 11.1: External Knowledge Provider Architecture (Tavily)
 
 You are a Principal AI Systems Architect.
 
@@ -6,490 +6,202 @@ This is NOT a feature request.
 
 This is NOT an architectural redesign.
 
-This is the implementation of Aetheris' Cognitive Reasoning Engine.
+This is the first implementation of Aetheris' External Knowledge Layer.
 
-The existing architecture is stable and must remain unchanged.
+The existing architecture is complete and must remain unchanged.
 
-Current Components
+Current Architecture
 
 - FastAPI Backend
 - Cognitive Request Router
+- Cognitive Reasoning Engine
 - Memory Hierarchy
 - Session Memory
 - Long-Term Memory
 - System Memory
 - Reflection Engine
 - Context Builder
+- Prompt Builder
 - Memory CRUD
 - Memory Persistence
-- Prompt Builder
 - LLM Provider Layer
 
 Everything currently works correctly.
 
-Do NOT break any existing functionality.
+Do NOT modify any existing functionality.
 
-Do NOT modify APIs unless absolutely necessary.
+Do NOT break any APIs.
 
-Do NOT redesign memory.
+Do NOT redesign the reasoning engine.
 
-Do NOT change the response generation pipeline.
-
-Only extend the architecture by introducing a reasoning layer before the LLM.
+Only extend the architecture by introducing an External Knowledge Provider layer.
 
 ---
 
 # Objective
 
-Currently the processing pipeline is approximately
+Aetheris must support external knowledge providers.
 
-User
+Tavily will be the first provider.
 
-↓
+However,
 
-Memory Retrieval
+the Reasoning Engine must NEVER know that Tavily exists.
 
-↓
+It should communicate only with an abstract provider interface.
 
-Prompt Builder
-
-↓
-
-LLM
-
-↓
-
-Response
-
-The objective is to transform it into
-
-User
-
-↓
-
-Intent Analysis
-
-↓
-
-Reasoning Engine
-
-↓
-
-Decision Engine
-
-↓
-
-Memory Selection
-
-↓
-
-Context Builder
-
-↓
-
-Prompt Builder
-
-↓
-
-LLM
-
-↓
-
-Verification
-
-↓
-
-Final Response
-
-The Reasoning Engine should determine HOW to solve a request before asking the LLM.
+Future providers should be pluggable without changing any reasoning logic.
 
 ---
 
 # Design Principles
 
-The Reasoning Engine must NOT generate answers.
+Implement a provider-based architecture.
 
-It should only make decisions.
+Avoid hardcoded integrations.
 
-The LLM remains responsible for generating natural language.
+Follow the same abstraction approach already used for the LLM Provider Layer.
 
-The Reasoning Engine decides
-
-- what information is needed
-- whether memory is needed
-- whether clarification is required
-- whether reasoning is simple or complex
-- whether the request should proceed immediately
+The External Knowledge Layer should be modular and extensible.
 
 ---
 
-# Module 1 – Intent Analyzer
+# Architecture
 
-Implement an Intent Analyzer.
+Create a new module
 
-Every request must first be classified.
+services/
 
-Examples
+    external_knowledge/
 
-Simple Question
+        __init__.py
 
-Programming
+        base_provider.py
 
-Memory Retrieval
+        provider_manager.py
 
-Conversation Continuation
-
-Explanation
-
-Planning
-
-Creative Writing
-
-Code Generation
-
-Debugging
-
-Reasoning
-
-Mathematics
-
-General Conversation
-
-Greeting
-
-Unknown
-
-Intent classification should be lightweight and deterministic where possible.
-
-Avoid unnecessary LLM calls.
+        tavily_provider.py
 
 ---
 
-# Module 2 – Complexity Classifier
+# Base Provider
 
-Determine how difficult the request is.
+Create an abstract base class.
 
-Three levels
+Responsibilities
 
-Simple
+- Define the common interface for all search providers.
+- Do not contain provider-specific logic.
+- Support future providers without modification.
 
-Medium
+Example responsibilities
 
-Complex
+- search()
+- health_check()
+- provider_name()
 
-Examples
-
-Simple
-
-2 + 2
-
-Greeting
-
-Definition
-
-Medium
-
-Programming explanation
-
-Memory retrieval
-
-Summarization
-
-Complex
-
-System design
-
-Architecture planning
-
-Large coding tasks
-
-Research planning
-
-Complex requests should activate additional reasoning stages.
-
-Simple requests should bypass unnecessary processing.
+Keep the interface generic.
 
 ---
 
-# Module 3 – Task Decomposer
+# Tavily Provider
 
-If a request contains multiple objectives,
+Implement the first concrete provider.
 
-split it into independent tasks.
+Responsibilities
 
-Example
+- Read the API key from environment variables.
+- Validate configuration.
+- Communicate with Tavily.
+- Return normalized search results.
 
-"Build a login page and explain JWT authentication."
+Do not expose Tavily-specific response formats to the rest of the application.
 
-↓
-
-Task 1
-
-Login Page
-
-Task 2
-
-JWT Explanation
-
-The decomposition should remain internal.
-
-The user should receive a unified response.
+Convert responses into Aetheris' internal format.
 
 ---
 
-# Module 4 – Decision Engine
+# Internal Search Result Format
 
-Before retrieving memory,
+Normalize every provider into a common structure.
 
-determine
+Each result should contain
 
-Need Conversation Memory?
+- title
+- url
+- snippet
+- content (if available)
+- source
+- score (if supported)
 
-Yes / No
-
-Need Long-Term Memory?
-
-Yes / No
-
-Need System Memory?
-
-Yes / No
-
-Need Reflection?
-
-Yes / No
-
-Need Clarification?
-
-Yes / No
-
-Need Planning?
-
-Yes / No
-
-The Decision Engine should minimize unnecessary work.
+Future providers must return the same format.
 
 ---
 
-# Module 5 – Clarification Engine
+# Provider Manager
 
-Do not guess.
+Create a Provider Manager.
 
-If required information is missing,
+Responsibilities
 
-ask concise clarification questions.
+- Initialize providers.
+- Validate API keys.
+- Expose the active provider.
+- Allow future provider switching.
+- Hide provider implementation details.
 
-Example
+The rest of Aetheris should interact only with the Provider Manager.
 
-"Build me a website."
-
-↓
-
-Clarify
-
-Portfolio?
-
-Dashboard?
-
-E-commerce?
-
-Avoid asking questions when reasonable assumptions can be made.
+Never directly instantiate Tavily elsewhere.
 
 ---
 
-# Module 6 – Planning Engine
+# Environment Variables
 
-For medium and complex requests,
+Read
 
-create an internal execution plan.
+TAVILY_API_KEY
 
-The plan should never be exposed to the user.
+If missing
 
-Example
-
-Understand Request
-
-↓
-
-Retrieve Required Context
-
-↓
-
-Determine Solution Strategy
-
-↓
-
-Generate Prompt
-
-↓
-
-Validate Response
-
-↓
-
-Return Response
+- log a clear warning
+- disable Tavily gracefully
+- do not crash the application
 
 ---
 
-# Module 7 – Response Verification
+# Configuration
 
-Before returning an answer,
+Centralize provider configuration.
 
-verify
+Avoid scattered environment lookups.
 
-Did the response answer the question?
+Prepare for future providers such as
 
-Did it follow user instructions?
+- Brave Search
+- Serper
+- Wikipedia
+- GitHub
+- News APIs
 
-Does it contradict memory?
-
-Is it internally consistent?
-
-Is required information missing?
-
-If verification fails,
-
-regenerate once or request clarification.
+without requiring architectural changes.
 
 ---
 
-# Module 8 – Confidence Estimation
+# Error Handling
 
-Generate an internal confidence score.
+Handle
 
-Examples
+- Missing API key
+- Invalid API key
+- Network failure
+- Timeout
+- Empty results
+- API rate limits
 
-High
+Return standardized errors.
 
-Known facts
-
-Math
-
-Memory retrieval
-
-Medium
-
-Programming advice
-
-Architecture
-
-Low
-
-Incomplete context
-
-Assumptions
-
-Speculation
-
-If confidence is below a configurable threshold,
-
-prefer asking the user for clarification instead of guessing.
-
-Confidence scores remain internal.
-
----
-
-# Module 9 – Reasoning Pipeline
-
-Every request should follow
-
-Input
-
-↓
-
-Intent Analysis
-
-↓
-
-Complexity Classification
-
-↓
-
-Task Decomposition
-
-↓
-
-Decision Engine
-
-↓
-
-Memory Selection
-
-↓
-
-Planning
-
-↓
-
-Prompt Construction
-
-↓
-
-LLM
-
-↓
-
-Verification
-
-↓
-
-Final Response
-
-Simple requests should automatically skip unnecessary stages.
-
----
-
-# Module 10 – Internal Cognitive Trace
-
-Implement an internal reasoning trace.
-
-This trace is for debugging only.
-
-It should include
-
-Intent
-
-Complexity
-
-Tasks
-
-Selected Memory Sources
-
-Planning Performed
-
-Verification Result
-
-Confidence Score
-
-Reasoning Duration
-
-The reasoning trace must never be shown to users unless explicitly enabled in debug mode.
-
----
-
-# Performance Goals
-
-The reasoning layer must remain lightweight.
-
-Simple requests should add minimal latency.
-
-Target
-
-Simple Requests
-
-<10 ms additional processing
-
-Medium Requests
-
-<25 ms additional processing
-
-Complex Requests
-
-<50 ms additional processing
-
-Avoid unnecessary LLM calls.
-
-Prefer deterministic logic whenever possible.
+Never expose raw provider exceptions.
 
 ---
 
@@ -497,148 +209,74 @@ Prefer deterministic logic whenever possible.
 
 Log
 
-Detected Intent
+Provider Initialized
 
-Complexity
+Provider Name
 
-Memory Sources Used
+Search Request
 
-Planning Activated
+Search Duration
 
-Clarification Required
+Result Count
 
-Verification Result
+Provider Errors
 
-Processing Time
-
-Reasoning Time
+Initialization Status
 
 ---
 
-# Testing
+# Health Check
 
-Scenario 1
+Expose a lightweight health check for the provider.
 
-User
+The application should know whether Tavily is currently available.
 
-"What is 5 + 6?"
-
-Expected
-
-Intent
-
-Mathematics
-
-Complexity
-
-Simple
-
-No memory retrieval
-
-No planning
-
-Immediate response
-
----
-
-Scenario 2
-
-User
-
-"What project am I building?"
-
-Expected
-
-Intent
-
-Memory Retrieval
-
-Long-Term Memory
-
-No planning
-
-Correct retrieval
-
----
-
-Scenario 3
-
-User
-
-"Continue our previous discussion."
-
-Expected
-
-Conversation Intent
-
-Conversation Memory
-
-No Long-Term Memory unless required
-
----
-
-Scenario 4
-
-User
-
-"Design a scalable authentication system."
-
-Expected
-
-Architecture Intent
-
-Complexity
-
-Complex
-
-Planning activated
-
-Structured response
-
----
-
-Scenario 5
-
-User
-
-"Build a login page and explain JWT."
-
-Expected
-
-Task decomposition
-
-Planning
-
-Single combined response
+Failure should not affect the rest of Aetheris.
 
 ---
 
 # Constraints
 
-Do not redesign existing modules.
+Do NOT modify
 
-Do not modify the Memory Hierarchy.
+- Cognitive Reasoning Engine
+- Memory System
+- Context Builder
+- Prompt Builder
+- Reflection Engine
+- Existing API routes
+- Existing LLM Provider Layer
 
-Do not change Context Builder behaviour.
+Do NOT perform searches automatically.
 
-Do not introduce internet access.
+This phase is only responsible for creating the provider architecture.
 
-Do not introduce autonomous agents.
+Search execution will be implemented in the next phase.
 
-Do not implement tool calling.
+---
 
-Do not modify memory persistence.
+# Performance
 
-Do not expose internal reasoning to users.
+Provider initialization should occur once during application startup.
 
-Maintain full backward compatibility.
+Avoid repeated initialization.
+
+Use dependency injection where appropriate.
 
 ---
 
 # Deliverables
 
-Implement a Cognitive Reasoning Engine that sits between the Cognitive Request Router and the Context Builder.
+Implement a modular External Knowledge Provider architecture.
 
-The engine should analyze intent, classify complexity, decompose tasks, decide which memory layers are required, determine whether clarification or planning is necessary, verify responses before delivery, and expose a debug-only cognitive trace.
+Implement Tavily as the first provider.
 
-The implementation should preserve the existing architecture while making Aetheris reason about requests before generating responses.
+Normalize all provider responses into a common internal format.
+
+Implement a Provider Manager responsible for provider lifecycle management.
+
+Ensure the rest of Aetheris remains completely unaware of provider-specific implementations.
+
+Maintain full backward compatibility with the existing architecture.
+
+The final result should establish a scalable External Knowledge Layer that allows additional providers to be integrated in the future with minimal effort, while keeping Tavily as the first supported implementation.

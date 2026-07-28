@@ -63,6 +63,9 @@ class Settings:
     groq_base_url: str = "https://api.groq.com/openai/v1"
     groq_model: str = "llama-3.3-70b-versatile"
 
+    # External Knowledge
+    tavily_api_key: str = ""
+
     # Global LLM settings
     llm_temperature: float = 0.7
     llm_max_tokens: int = 256
@@ -115,6 +118,7 @@ def get_settings() -> Settings:
         llm_max_tokens=int(
             os.getenv("LLM_MAX_TOKENS", env_file_values.get("LLM_MAX_TOKENS", "256"))
         ),
+        tavily_api_key=os.getenv("TAVILY_API_KEY", env_file_values.get("TAVILY_API_KEY", "")),
         llm_timeout=float(
             os.getenv("LLM_TIMEOUT", env_file_values.get("LLM_TIMEOUT", "30"))
         ),
