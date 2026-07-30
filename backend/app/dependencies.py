@@ -238,6 +238,15 @@ def get_external_knowledge_integration() -> "ExternalKnowledgeIntegrationService
     )
 
 
+@lru_cache(maxsize=1)
+def get_conversation_intelligence_engine() -> "ConversationIntelligenceEngine":
+    """Provide the shared Conversation Intelligence Engine."""
+
+    from .services.conversation_intelligence_engine import ConversationIntelligenceEngine
+
+    return ConversationIntelligenceEngine()
+
+
 def get_request_router(
     llm_service: "LLMService" = Depends(get_llm_service),
     memory_service: "MemoryService" = Depends(get_memory_service),
@@ -252,6 +261,8 @@ def get_request_router(
     memory_hierarchy: "MemoryHierarchyService" = Depends(get_memory_hierarchy_service),
     reasoning_pipeline: "ReasoningPipeline" = Depends(get_reasoning_pipeline),
     external_knowledge_integration: "ExternalKnowledgeIntegrationService" = Depends(get_external_knowledge_integration),
+    conversation_intelligence: "ConversationIntelligenceEngine" = Depends(get_conversation_intelligence_engine),
+    conversation_memory: "ConversationMemory" = Depends(get_conversation_memory),
 ) -> "CognitiveRequestRouter":
     """Provide the CognitiveRequestRouter wired to all subsystems."""
 
@@ -272,5 +283,7 @@ def get_request_router(
         memory_hierarchy=memory_hierarchy,
         reasoning_pipeline=reasoning_pipeline,
         external_knowledge_integration=external_knowledge_integration,
+        conversation_memory=conversation_memory,
+        conversation_intelligence=conversation_intelligence,
         assembler=ResponseAssembler(),
     )

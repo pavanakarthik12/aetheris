@@ -66,6 +66,11 @@ class Settings:
     # External Knowledge
     tavily_api_key: str = ""
 
+    # Conversation Intelligence Engine
+    followup_confidence_threshold: float = 0.75
+    max_context_messages: int = 4
+    max_reference_distance: int = 6
+
     # Context Relevance Engine
     memory_relevance_threshold: float = 0.55
     conversation_relevance_threshold: float = 0.40
@@ -135,6 +140,16 @@ def get_settings() -> Settings:
             os.getenv("LLM_MAX_TOKENS", env_file_values.get("LLM_MAX_TOKENS", "256"))
         ),
         tavily_api_key=os.getenv("TAVILY_API_KEY", env_file_values.get("TAVILY_API_KEY", "")),
+        # Conversation Intelligence Engine
+        followup_confidence_threshold=float(
+            os.getenv("FOLLOWUP_CONFIDENCE_THRESHOLD", env_file_values.get("FOLLOWUP_CONFIDENCE_THRESHOLD", "0.75"))
+        ),
+        max_context_messages=int(
+            os.getenv("MAX_CONTEXT_MESSAGES", env_file_values.get("MAX_CONTEXT_MESSAGES", "4"))
+        ),
+        max_reference_distance=int(
+            os.getenv("MAX_REFERENCE_DISTANCE", env_file_values.get("MAX_REFERENCE_DISTANCE", "6"))
+        ),
         # Context Relevance Engine
         memory_relevance_threshold=float(
             os.getenv("MEMORY_RELEVANCE_THRESHOLD", env_file_values.get("MEMORY_RELEVANCE_THRESHOLD", "0.55"))

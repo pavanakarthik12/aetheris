@@ -17,6 +17,8 @@ from ..schemas.routing import (
 from ..schemas.reasoning import CognitiveTrace, ReasoningPlan, SemanticIntentType
 from .chroma_service import ChromaService
 from .context_builder import ContextBuilderService
+from .conversation_intelligence_engine import ConversationIntelligenceEngine, FollowUpIntent
+from .conversation_memory import ConversationMemory
 from .embedding_service import EmbeddingService
 from .external_knowledge.integration_service import ExternalKnowledgeIntegrationService
 from .immediate_memory_processor import ImmediateMemoryProcessor
@@ -69,6 +71,8 @@ class CognitiveRequestRouter:
         reasoning_pipeline: ReasoningPipeline | None = None,
         external_knowledge_integration: ExternalKnowledgeIntegrationService | None = None,
         assembler: ResponseAssembler | None = None,
+        conversation_memory: ConversationMemory | None = None,
+        conversation_intelligence: ConversationIntelligenceEngine | None = None,
     ) -> None:
         self._llm = llm_service
         self._memory_service = memory_service
@@ -87,6 +91,8 @@ class CognitiveRequestRouter:
         self._reasoning = reasoning_pipeline
         self._external_knowledge = external_knowledge_integration
         self._assembler = assembler or ResponseAssembler()
+        self._conversation_memory = conversation_memory
+        self._conversation_intelligence = conversation_intelligence
 
     async def route(
         self,
@@ -156,6 +162,37 @@ class CognitiveRequestRouter:
                 )
                 result.debug = debug.build()
                 return result
+
+        # Conversation Intelligence: detect and resolve follow-up references
+        if self._conversation_intelligence is not None and self._conversation_memory is not None:
+            history = self._conversation_memory.get_recent(turns=6)
+            ci_analysis = await self._conversation_intelligence.analyze(message, history)
+            if ci_analysis.intent != FollowUpIntent.NEW_TOPIC:
+                ci_elapsed = (perf_counter() - started_at) * 1000
+                steps.append(RouteStep(
+                    subsystem="ConversationIntelligence",
+                    action="analyze",
+                    duration_ms=ci_elapsed,
+                    success=True,
+                    detail=(
+                        f"intent={ci_analysis.intent.value} "
+                        f"confidence={ci_analysis.confidence:.2f} "
+                        f"topic='{ci_analysis.resolved_topic}'"
+                    ),
+                ))
+                if ci_analysis.needs_clarification:
+                    debug.set_duration(ci_elapsed)
+                    debug.set_steps(steps)
+                    return RouterResult(
+                        response=ci_analysis.clarification_question,
+                        memory_count=0,
+                        memory_action=MemoryActionType.SKIP,
+                        memory_success=True,
+                        debug=debug.build(),
+                    )
+                else:
+                    context = self._conversation_intelligence.build_follow_up_context(ci_analysis)
+                    message = f"{context}\n\n---\n\n{message}"
 
         subsystems: list[str] = []
 
