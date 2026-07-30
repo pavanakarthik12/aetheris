@@ -184,7 +184,7 @@ class CognitiveRequestRouter:
                     debug.set_duration(ci_elapsed)
                     debug.set_steps(steps)
                     return RouterResult(
-                        response=ci_analysis.clarification_question,
+                        response=self._conversation_intelligence.build_clarification_question(ci_analysis),
                         memory_count=0,
                         memory_action=MemoryActionType.SKIP,
                         memory_success=True,
