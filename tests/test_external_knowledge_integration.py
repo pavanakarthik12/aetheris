@@ -229,9 +229,9 @@ class IntegrationServiceTests(IsolatedAsyncioTestCase):
             success=True,
             result_count=3,
             results=[
-                NormalizedSearchResultItem(title="R1", url="http://a.com", snippet="S1"),
-                NormalizedSearchResultItem(title="R2", url="http://b.com", snippet="S2"),
-                NormalizedSearchResultItem(title="R3", url="http://c.com", snippet="S3"),
+                NormalizedSearchResultItem(title="R1", url="http://a.com", snippet="S1", score=0.9),
+                NormalizedSearchResultItem(title="R2", url="http://b.com", snippet="S2", score=0.8),
+                NormalizedSearchResultItem(title="R3", url="http://c.com", snippet="S3", score=0.7),
             ],
         )
         self.formatter.format_results.return_value = "External Knowledge:\n\nSource 1..."

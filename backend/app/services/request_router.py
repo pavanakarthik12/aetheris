@@ -42,6 +42,7 @@ from .memory_service import MemoryService
 from .metrics_collector import MetricsCollector
 from .prompt_builder import PromptBuilder
 from .reflection_service import ReflectionService
+from .response_assembler import ResponseAssembler
 from .token_budget import select_budget
 
 logger = logging.getLogger(__name__)
@@ -67,6 +68,7 @@ class CognitiveRequestRouter:
         memory_hierarchy: MemoryHierarchyService | None = None,
         reasoning_pipeline: ReasoningPipeline | None = None,
         external_knowledge_integration: ExternalKnowledgeIntegrationService | None = None,
+        assembler: ResponseAssembler | None = None,
     ) -> None:
         self._llm = llm_service
         self._memory_service = memory_service
@@ -84,6 +86,7 @@ class CognitiveRequestRouter:
         self._memory_hierarchy = memory_hierarchy
         self._reasoning = reasoning_pipeline
         self._external_knowledge = external_knowledge_integration
+        self._assembler = assembler or ResponseAssembler()
 
     async def route(
         self,
@@ -275,7 +278,7 @@ class CognitiveRequestRouter:
         memories = await self._retrieve_memories(message, steps)
         memory_context = self._build_context(memories, steps, query=message)
 
-        memory_context, ext_system_prompt = await self._inject_external_knowledge(
+        memory_context, ext_system_prompt, structured_context = await self._inject_external_knowledge(
             message=message,
             memory_context=memory_context,
             reasoning_plan=reasoning_plan,
@@ -299,14 +302,21 @@ class CognitiveRequestRouter:
             temperature=budget.temperature,
         )
 
+        assembled = self._assembler.assemble(
+            raw_response=response,
+            structured_context=structured_context,
+            user_message=message,
+        )
+
         debug.set_memory_action(imm_result.action)
         debug.set_memory_operation_count(
             1 if imm_result.action not in (MemoryActionType.SKIP, MemoryActionType.ERROR) else 0,
         )
         debug.set_reflection(True)
+        debug.set_response_quality(assembled)
 
         return RouterResult(
-            response=response,
+            response=assembled.response,
             memory_count=injected_count,
             memory_action=imm_result.action,
             memory_success=imm_result.success,
@@ -882,7 +892,7 @@ class CognitiveRequestRouter:
             memories = await self._retrieve_memories(message, steps)
             memory_context = self._build_context(memories, steps, query=message)
 
-        memory_context, ext_system_prompt = await self._inject_external_knowledge(
+        memory_context, ext_system_prompt, structured_context = await self._inject_external_knowledge(
             message=message,
             memory_context=memory_context,
             reasoning_plan=reasoning_plan,
@@ -916,14 +926,21 @@ class CognitiveRequestRouter:
                 temperature=budget.temperature,
             )
 
+        assembled = self._assembler.assemble(
+            raw_response=response,
+            structured_context=structured_context,
+            user_message=message,
+        )
+
         debug.set_memory_action(imm_result.action)
         debug.set_memory_operation_count(
             1 if imm_result.action not in (MemoryActionType.SKIP, MemoryActionType.ERROR) else 0,
         )
         debug.set_reflection(True)
+        debug.set_response_quality(assembled)
 
         return RouterResult(
-            response=response,
+            response=assembled.response,
             memory_count=injected_count,
             memory_action=imm_result.action,
             memory_success=imm_result.success,
@@ -1334,12 +1351,12 @@ class CognitiveRequestRouter:
         memory_context: str,
         reasoning_plan: ReasoningPlan | None,
         steps: list[RouteStep],
-    ) -> tuple[str, str | None]:
+    ) -> tuple[str, str | None, StructuredContext | None]:
         if reasoning_plan is None or not reasoning_plan.needs_external_knowledge:
-            return memory_context, None
+            return memory_context, None, None
 
         if self._external_knowledge is None:
-            return memory_context, None
+            return memory_context, None, None
 
         ext_result = await self._external_knowledge.execute(
             message=message,
@@ -1359,7 +1376,7 @@ class CognitiveRequestRouter:
         ))
 
         if not ext_result.triggered or not ext_result.success or not ext_result.context_block:
-            return memory_context, None
+            return memory_context, None, ext_result.structured_context
 
         combined = memory_context.strip()
         if combined:
@@ -1377,7 +1394,7 @@ class CognitiveRequestRouter:
             ext_result.execution_time_ms,
         )
 
-        return combined, modified_prompt
+        return combined, modified_prompt, ext_result.structured_context
 
     @staticmethod
     def _count_injected(memory_context: str) -> int:
@@ -1409,6 +1426,11 @@ class RouterDebugifier:
         self._sys_count: int = 0
         self._context_size: int = 0
         self._cognitive_trace: CognitiveTrace | None = None
+        self._resp_quality_score: float = 1.0
+        self._resp_quality_passed: bool = True
+        self._resp_quality_issues: list[str] = []
+        self._source_count: int = 0
+        self._assembly_time_ms: float = 0.0
 
     def set_intent(self, classification: IntentClassification) -> None:
         self._intent = classification.primary_intent
@@ -1458,6 +1480,13 @@ class RouterDebugifier:
     def set_cognitive_trace(self, trace: CognitiveTrace | None) -> None:
         self._cognitive_trace = trace
 
+    def set_response_quality(self, assembled: "AssembledResponse") -> None:
+        self._resp_quality_score = assembled.quality.score
+        self._resp_quality_passed = assembled.quality.passed
+        self._resp_quality_issues = assembled.quality.issues
+        self._source_count = len(assembled.sources)
+        self._assembly_time_ms = assembled.assembly_time_ms
+
     def build(self) -> RouterDebugInfo:
         return RouterDebugInfo(
             detected_intent=self._intent,
@@ -1476,4 +1505,9 @@ class RouterDebugifier:
             system_memories_used=self._sys_count,
             context_size_chars=self._context_size,
             cognitive_trace=self._cognitive_trace,
+            response_quality_score=self._resp_quality_score,
+            response_quality_passed=self._resp_quality_passed,
+            response_quality_issues=self._resp_quality_issues,
+            source_count=self._source_count,
+            assembly_time_ms=self._assembly_time_ms,
         )

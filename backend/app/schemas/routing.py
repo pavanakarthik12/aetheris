@@ -85,6 +85,26 @@ class RouterDebugInfo(BaseModel):
         default=None,
         description="Reasoning engine cognitive trace (debug mode only).",
     )
+    response_quality_score: float = Field(
+        default=1.0,
+        description="Response quality score from the ResponseAssembler (0.0–1.0).",
+    )
+    response_quality_passed: bool = Field(
+        default=True,
+        description="Whether the response passed quality checks.",
+    )
+    response_quality_issues: list[str] = Field(
+        default_factory=list,
+        description="Quality issues identified in the response.",
+    )
+    source_count: int = Field(
+        default=0,
+        description="Number of external sources cited in the response.",
+    )
+    assembly_time_ms: float = Field(
+        default=0.0,
+        description="Time taken by the ResponseAssembler in milliseconds.",
+    )
 
 
 class RouterResult(BaseModel):
