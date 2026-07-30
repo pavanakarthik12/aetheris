@@ -24,7 +24,7 @@ async def debug_filter(
     """Run the Memory Relevance Filter on live memories for a given query."""
     memories = await memory_service.search_memory(query=query, top_k=limit)
 
-    filter_result = context_builder.debug_filter(query=query, memories=memories)
+    filter_result = await context_builder.debug_filter(query=query, memories=memories)
 
     return {
         "query": query,

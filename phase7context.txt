@@ -1,129 +1,40 @@
-# Aetheris – Phase 11.3: External Knowledge Integration with Cognitive Reasoning Engine
+# Aetheris – Phase 12.1: Context Relevance & Intelligent Memory Filtering
 
 You are a Principal AI Systems Architect.
 
-This phase integrates the existing External Knowledge Search Pipeline into Aetheris' Cognitive Reasoning Engine.
+This phase improves the intelligence of Aetheris' Context Builder.
+
+The Memory System already works correctly.
+
+The Reflection Engine already works correctly.
+
+The Cognitive Request Router already works correctly.
+
+The External Knowledge System already works correctly.
+
+The issue is that Aetheris injects unrelated memories and conversation history into responses.
+
+This causes responses like:
+
+User:
+"Explain what a kingdom is."
+
+Assistant:
+"...Gandhi...
+...Python...
+...your current project..."
+
+These pieces of information are unrelated to the user's question and should never have been included.
+
+The objective of this phase is to ensure that Aetheris only injects context that is genuinely relevant to the current request.
+
+---
+
+# Existing Architecture
 
 Do NOT redesign the architecture.
 
-Do NOT modify the existing Memory System.
-
-Do NOT modify the Reflection Engine.
-
-Do NOT modify the Context Builder.
-
-Do NOT modify the Prompt Builder.
-
-Do NOT modify the LLM Provider Layer.
-
-Do NOT modify the External Knowledge Provider architecture.
-
-Everything implemented in previous phases is stable and must remain backward compatible.
-
----
-
-# Existing Components
-
-The following modules already exist:
-
-- Cognitive Request Router
-- Cognitive Reasoning Engine
-- Memory Hierarchy
-- Reflection Engine
-- Context Builder
-- Prompt Builder
-- LLM Provider Layer
-- Provider Manager
-- Tavily Provider
-- External Search Pipeline
-
-These modules must continue working exactly as before.
-
----
-
-# Objective
-
-The Cognitive Reasoning Engine should intelligently decide whether a user's request requires external knowledge.
-
-If external knowledge is required, it should execute a search using the existing Search Pipeline and provide the retrieved information to the LLM.
-
-This decision must happen automatically.
-
-No user action should be required.
-
----
-
-# Decision Layer
-
-Before building the final prompt, the Reasoning Engine must classify every request into one of two categories.
-
-Category A
-
-No external knowledge required.
-
-Examples
-
-- Explain binary search.
-- What is polymorphism?
-- Reverse a linked list.
-- Write a Java program.
-- Explain machine learning.
-
-These should behave exactly as they do today.
-
-No search should occur.
-
----
-
-Category B
-
-External knowledge required.
-
-Examples
-
-- Latest FastAPI version
-- Today's weather
-- OpenAI latest news
-- NVIDIA stock today
-- IPL points table
-- Python 3.14 release notes
-- Recent AI announcements
-- Current Prime Minister of...
-- Latest React version
-
-These should trigger the Search Pipeline.
-
----
-
-# External Knowledge Trigger
-
-Implement lightweight decision logic.
-
-Search should trigger when requests involve
-
-- latest
-- current
-- today
-- yesterday
-- this week
-- this month
-- recent
-- news
-- update
-- release
-- documentation
-- API changes
-- version
-- live information
-- internet lookup
-
-The trigger should be modular and easily replaceable by a more advanced classifier in future phases.
-
----
-
-# Search Flow
-
-When external knowledge is required
+Existing pipeline
 
 User
 
@@ -133,11 +44,15 @@ Reasoning Engine
 
 ↓
 
-Search Pipeline
+Memory Retrieval
 
 ↓
 
-Normalized Search Results
+Conversation Retrieval
+
+↓
+
+Search (optional)
 
 ↓
 
@@ -151,192 +66,392 @@ Prompt Builder
 
 LLM
 
-↓
-
-Final Response
-
-The Reasoning Engine must not communicate with Tavily directly.
-
-It must only interact with the Search Pipeline.
+Only improve the Context Builder and retrieval filtering.
 
 ---
 
-# Context Injection
+# Objective
 
-Use only the normalized search results.
+Introduce a Context Relevance Engine.
 
-Never expose provider-specific JSON to the LLM.
+Every retrieved memory, conversation, and external search result must be evaluated for relevance before being added to the prompt.
 
-Construct a clean external context section.
+Low relevance information should never reach the LLM.
+
+---
+
+# Context Relevance Engine
+
+Create a dedicated Context Relevance Engine.
+
+It should evaluate
+
+• Long-Term Memory
+
+• Conversation Memory
+
+• External Search Results
+
+independently.
+
+The output should be a filtered set of highly relevant context.
+
+---
+
+# Memory Relevance
+
+Every retrieved memory should receive a relevance score.
+
+Use multiple signals.
+
+Examples
+
+Semantic similarity
+
+Embedding similarity
+
+Keyword overlap
+
+Intent similarity
+
+Topic similarity
+
+Recency (optional)
+
+Importance score
+
+Final relevance score
+
+Only inject memories above a configurable threshold.
 
 Example
 
-External Knowledge
+Threshold
 
-Source 1
+0.70
 
-Title
+Memory
 
-Snippet
+Favorite Programming Language
 
-URL
+Query
 
----
+"What is a kingdom?"
 
-Source 2
+Similarity
 
-Title
+0.08
 
-Snippet
-
-URL
+Discard.
 
 ---
 
-Append this section to the existing prompt generated by the Context Builder.
+Memory
 
-Do not replace the existing prompt.
+Current Project
 
-Enhance it.
+Query
 
----
+"What project am I building?"
 
-# LLM Instructions
+Similarity
 
-When external knowledge is available, instruct the LLM to
+0.97
 
-- prioritize retrieved information
-- combine it with its own reasoning
-- admit uncertainty if the search results are insufficient
-- never fabricate facts that are absent from both memory and search results
+Inject.
 
 ---
 
-# Search Failure Handling
+Memory
 
-If the search fails
+Preferred Name
 
-Continue the conversation.
+Query
 
-Do not terminate the request.
+"Who am I?"
 
-The LLM should answer using its own knowledge.
+Similarity
 
-Log the failure.
+0.95
 
-Never expose internal errors.
+Inject.
+
+---
+
+# Conversation Relevance
+
+Do not automatically inject previous conversation.
+
+Evaluate relevance first.
+
+Example
+
+Conversation
+
+Gandhi
+
+Current Question
+
+Kingdom
+
+Similarity
+
+Low
+
+Discard.
+
+---
+
+Conversation
+
+FastAPI
+
+Current Question
+
+Latest FastAPI Version
+
+Similarity
+
+High
+
+Inject.
+
+---
+
+# Search Context Relevance
+
+If external search is used
+
+Evaluate every search result.
+
+Only keep highly relevant results.
+
+Do not inject every search result.
+
+---
+
+# Personalization Rules
+
+Personal memories should only be injected if they improve the answer.
+
+Never mention
+
+favorite language
+
+current project
+
+previous conversations
+
+user preferences
+
+unless directly related to the user's request.
+
+Bad
+
+User
+
+"What is gravity?"
+
+Assistant
+
+"Since you like Python..."
+
+Good
+
+User
+
+"Help me learn Python."
+
+Assistant
+
+"Since Python is one of your preferred languages..."
+
+---
+
+# Context Categories
+
+Separate context into
+
+System Context
+
+Relevant Memory
+
+Relevant Conversation
+
+Relevant External Knowledge
+
+Each section should be optional.
+
+If a section has no relevant information
+
+Do not include it.
+
+---
+
+# Context Budget
+
+Limit the number of injected memories.
+
+Example
+
+Maximum Memory Entries
+
+5
+
+Maximum Conversation Entries
+
+3
+
+Maximum Search Results
+
+5
+
+Prefer higher relevance over quantity.
 
 ---
 
 # Logging
 
-Record
+For every request log
 
-Timestamp
+Retrieved Memories
 
-Decision
+Injected Memories
 
-Search Triggered
+Rejected Memories
 
-Query
+Relevance Scores
 
-Provider
+Conversation Score
 
-Execution Time
+Search Score
 
-Search Success
+Final Prompt Size
 
-Result Count
-
-Prompt Size
-
-LLM Response Time
-
-This information should assist future optimization.
+These logs should help tune future thresholds.
 
 ---
 
-# Constraints
+# Configuration
 
-Do NOT implement
+Make thresholds configurable.
 
-- Search ranking
-- Summarization
-- Search caching
-- Multi-provider orchestration
-- Citation generation
-- Automatic memory creation from search
-- Search history
-- Background indexing
+Example
 
-These belong to future phases.
+MEMORY_RELEVANCE_THRESHOLD=0.70
+
+CONVERSATION_RELEVANCE_THRESHOLD=0.65
+
+SEARCH_RELEVANCE_THRESHOLD=0.75
+
+Allow future tuning without code changes.
+
+---
+
+# Backward Compatibility
+
+Do NOT modify
+
+Memory CRUD
+
+Reflection Engine
+
+Reasoning Engine
+
+Provider Manager
+
+Search Pipeline
+
+Prompt Builder
+
+LLM Provider
+
+Conversation Storage
+
+The Context Builder should simply receive cleaner context.
 
 ---
 
 # Testing
 
-The following queries should NOT trigger search
+Test
 
-Explain Quick Sort.
-
-What is Object Oriented Programming?
-
-Reverse an Array.
-
-Difference between HashMap and HashSet.
-
-Write Merge Sort in Java.
+"What is a kingdom?"
 
 Expected
 
-No external search.
+No programming memories.
+
+No Gandhi memories.
+
+No project memories.
+
+Pure educational answer.
 
 ---
 
-The following queries SHOULD trigger search
+Test
 
-Latest FastAPI version.
-
-OpenAI latest news.
-
-Today's weather in Hyderabad.
-
-React latest release.
-
-Current Java LTS version.
+"What project am I building?"
 
 Expected
 
-Search Pipeline executes.
+Project memories injected.
 
-Search results are injected into the prompt.
-
-LLM produces an answer using retrieved information.
+No unrelated memories.
 
 ---
 
-Search Failure Test
+Test
 
-Disconnect the internet.
-
-Ask
-
-Latest Python version.
+"What programming language do I prefer?"
 
 Expected
 
-Search fails gracefully.
-
-The conversation continues.
-
-The LLM answers using existing knowledge while indicating that live information could not be retrieved.
+Programming memories injected.
 
 ---
 
-Deliverables
+Test
 
-Integrate the existing Search Pipeline into the Cognitive Reasoning Engine by introducing an automatic decision layer that determines when external knowledge is required.
+"Latest FastAPI version"
 
-When triggered, the system should execute the existing Search Pipeline, inject normalized search results into the Context Builder, and allow the LLM to generate responses using both retrieved information and its own reasoning.
+Expected
 
-The implementation must preserve the current architecture, remain provider-independent, and avoid introducing ranking, summarization, caching, or other optimization features.
+Relevant search results injected.
+
+No unrelated memories.
+
+---
+
+Test
+
+"What is machine learning?"
+
+Expected
+
+No unrelated personal memories.
+
+Only educational response.
+
+---
+
+Test
+
+Long conversation changing topics repeatedly.
+
+Expected
+
+Only context related to the current topic is injected.
+
+Old unrelated topics should not leak into new responses.
+
+---
+
+# Deliverables
+
+Implement a Context Relevance Engine that intelligently filters Long-Term Memory, Conversation Memory, and External Search Results before they reach the Context Builder.
+
+Every context item must receive a relevance score, and only context above configurable thresholds should be injected into the final prompt.
+
+The implementation must preserve the existing architecture, remain fully backward compatible, reduce prompt pollution, improve response quality, and eliminate unrelated memories or conversations from appearing in answers.

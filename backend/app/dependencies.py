@@ -54,12 +54,21 @@ def get_memory_service() -> "MemoryService":
 
 
 @lru_cache(maxsize=1)
+def get_context_relevance_engine() -> "ContextRelevanceEngine":
+    """Provide the shared Context Relevance Engine."""
+
+    from .services.context_relevance_engine import ContextRelevanceEngine
+
+    return ContextRelevanceEngine(embedding_service=get_embedding_service())
+
+
+@lru_cache(maxsize=1)
 def get_context_builder_service() -> "ContextBuilderService":
     """Provide the shared ContextBuilderService instance for dependency injection."""
 
     from .services.context_builder import ContextBuilderService
 
-    return ContextBuilderService()
+    return ContextBuilderService(relevance_engine=get_context_relevance_engine())
 
 
 def get_memory_evaluator_service(
@@ -178,6 +187,7 @@ def get_memory_hierarchy_service(
         conversation_memory=conversation_memory,
         long_term_memory=memory_service,
         system_memory=system_memory,
+        relevance_engine=get_context_relevance_engine(),
     )
 
 

@@ -157,7 +157,7 @@ async def main() -> None:
 
         demo_query = "What project am I building?"
         demo_results = await mem_svc.search_memory(query=demo_query, top_k=5)
-        memory_context = cb.build_memory_context(demo_results)
+        memory_context = await cb.build_memory_context(demo_results)
         system_prompt = PromptBuilder.chat_system()
 
         print(f"\n  MIN_SCORE filter   : {_MIN_SCORE}")

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 
@@ -66,6 +66,22 @@ class Settings:
     # External Knowledge
     tavily_api_key: str = ""
 
+    # Context Relevance Engine
+    memory_relevance_threshold: float = 0.55
+    conversation_relevance_threshold: float = 0.40
+    search_relevance_threshold: float = 0.55
+    max_memory_entries: int = 5
+    max_conversation_entries: int = 3
+    max_search_results: int = 5
+    relevance_weights: dict[str, float] = field(default_factory=lambda: {
+        "chroma": 0.45,
+        "keyword": 0.20,
+        "topic": 0.20,
+        "recency": 0.05,
+        "importance": 0.10,
+        "existing_score": 0.50,
+    })
+
     # Global LLM settings
     llm_temperature: float = 0.7
     llm_max_tokens: int = 1024
@@ -119,6 +135,33 @@ def get_settings() -> Settings:
             os.getenv("LLM_MAX_TOKENS", env_file_values.get("LLM_MAX_TOKENS", "256"))
         ),
         tavily_api_key=os.getenv("TAVILY_API_KEY", env_file_values.get("TAVILY_API_KEY", "")),
+        # Context Relevance Engine
+        memory_relevance_threshold=float(
+            os.getenv("MEMORY_RELEVANCE_THRESHOLD", env_file_values.get("MEMORY_RELEVANCE_THRESHOLD", "0.55"))
+        ),
+        conversation_relevance_threshold=float(
+            os.getenv("CONVERSATION_RELEVANCE_THRESHOLD", env_file_values.get("CONVERSATION_RELEVANCE_THRESHOLD", "0.65"))
+        ),
+        search_relevance_threshold=float(
+            os.getenv("SEARCH_RELEVANCE_THRESHOLD", env_file_values.get("SEARCH_RELEVANCE_THRESHOLD", "0.55"))
+        ),
+        max_memory_entries=int(
+            os.getenv("MAX_MEMORY_ENTRIES", env_file_values.get("MAX_MEMORY_ENTRIES", "5"))
+        ),
+        max_conversation_entries=int(
+            os.getenv("MAX_CONVERSATION_ENTRIES", env_file_values.get("MAX_CONVERSATION_ENTRIES", "3"))
+        ),
+        max_search_results=int(
+            os.getenv("MAX_SEARCH_RESULTS", env_file_values.get("MAX_SEARCH_RESULTS", "5"))
+        ),
+        relevance_weights={
+            "chroma": float(os.getenv("RELEVANCE_WEIGHT_CHROMA", env_file_values.get("RELEVANCE_WEIGHT_CHROMA", "0.45"))),
+            "keyword": float(os.getenv("RELEVANCE_WEIGHT_KEYWORD", env_file_values.get("RELEVANCE_WEIGHT_KEYWORD", "0.20"))),
+            "topic": float(os.getenv("RELEVANCE_WEIGHT_TOPIC", env_file_values.get("RELEVANCE_WEIGHT_TOPIC", "0.20"))),
+            "recency": float(os.getenv("RELEVANCE_WEIGHT_RECENCY", env_file_values.get("RELEVANCE_WEIGHT_RECENCY", "0.05"))),
+            "importance": float(os.getenv("RELEVANCE_WEIGHT_IMPORTANCE", env_file_values.get("RELEVANCE_WEIGHT_IMPORTANCE", "0.10"))),
+            "existing_score": float(os.getenv("RELEVANCE_WEIGHT_EXISTING", env_file_values.get("RELEVANCE_WEIGHT_EXISTING", "0.50"))),
+        },
         llm_timeout=float(
             os.getenv("LLM_TIMEOUT", env_file_values.get("LLM_TIMEOUT", "30"))
         ),

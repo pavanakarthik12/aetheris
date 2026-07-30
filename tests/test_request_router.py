@@ -180,7 +180,7 @@ class FakeLLMService:
 
 
 class FakeContextBuilder:
-    def build_memory_context(
+    async def build_memory_context(
         self,
         memories: list[dict[str, Any]],
         min_score: float = 0.20,

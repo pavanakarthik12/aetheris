@@ -276,7 +276,7 @@ class CognitiveRequestRouter:
             self._cache.invalidate()
 
         memories = await self._retrieve_memories(message, steps)
-        memory_context = self._build_context(memories, steps, query=message)
+        memory_context = await self._build_context(memories, steps, query=message)
 
         memory_context, ext_system_prompt, structured_context = await self._inject_external_knowledge(
             message=message,
@@ -468,7 +468,7 @@ class CognitiveRequestRouter:
                 debug.set_reflection(True)
 
             memories = await self._retrieve_memories(message, steps)
-            memory_context = self._build_context(memories, steps, query=message)
+            memory_context = await self._build_context(memories, steps, query=message)
 
             budget = select_budget(message, intent=IntentType.UPDATE_MEMORY, memory_count=self._count_injected(memory_context))
             response = await self._call_llm(
@@ -622,7 +622,7 @@ class CognitiveRequestRouter:
                 debug.set_reflection(True)
 
             memories = await self._retrieve_memories(message, steps)
-            memory_context = self._build_context(memories, steps, query=message)
+            memory_context = await self._build_context(memories, steps, query=message)
             budget = select_budget(message, memory_count=self._count_injected(memory_context))
             response = await self._call_llm(
                 message=message,
@@ -664,7 +664,7 @@ class CognitiveRequestRouter:
             debug.set_context_size(len(memory_context))
         else:
             memories = await self._retrieve_memories(message, steps)
-            memory_context = self._build_context(memories, steps, query=message)
+            memory_context = await self._build_context(memories, steps, query=message)
 
         injected_count = self._count_injected(memory_context)
 
@@ -708,7 +708,7 @@ class CognitiveRequestRouter:
         ))
 
         memories = await self._retrieve_memories(message, steps)
-        memory_context = self._build_context(memories, steps, query=message)
+        memory_context = await self._build_context(memories, steps, query=message)
         combined_context = (
             "[Web search requested. Respond from your existing knowledge or note if a live connection is needed.]"
         )
@@ -745,7 +745,7 @@ class CognitiveRequestRouter:
             debug.set_context_size(len(memory_context))
         else:
             memories = await self._retrieve_memories(message, steps)
-            memory_context = self._build_context(memories, steps, query=message)
+            memory_context = await self._build_context(memories, steps, query=message)
 
         budget = select_budget(message, intent=IntentType.SYSTEM_QUERY)
         response = await self._call_llm(
@@ -808,7 +808,7 @@ class CognitiveRequestRouter:
 
                 elif sub_intent == IntentType.SEARCH_MEMORY:
                     sub_memories = await self._retrieve_memories(message, steps)
-                    sub_context = self._build_context(sub_memories, steps, query=message)
+                    sub_context = await self._build_context(sub_memories, steps, query=message)
                     if sub_context:
                         context_parts.append(f"[Action {i + 1}: Found memories]\n{sub_context}")
                     subsystems.add("MemoryService")
@@ -835,7 +835,7 @@ class CognitiveRequestRouter:
 
         combined_context = "\n".join(context_parts) if context_parts else ""
         memories = await self._retrieve_memories(message, steps)
-        memory_context = self._build_context(memories, steps, query=message)
+        memory_context = await self._build_context(memories, steps, query=message)
 
         if memory_context:
             combined_context = f"{combined_context}\n\n{memory_context}" if combined_context else memory_context
@@ -890,7 +890,7 @@ class CognitiveRequestRouter:
             debug.set_context_size(len(memory_context))
         else:
             memories = await self._retrieve_memories(message, steps)
-            memory_context = self._build_context(memories, steps, query=message)
+            memory_context = await self._build_context(memories, steps, query=message)
 
         memory_context, ext_system_prompt, structured_context = await self._inject_external_knowledge(
             message=message,
@@ -1057,13 +1057,13 @@ class CognitiveRequestRouter:
             ))
             return []
 
-    def _build_context(
+    async def _build_context(
         self,
         memories: list[dict[str, Any]],
         steps: list[RouteStep],
         query: str = "",
     ) -> str:
-        memory_context = self._context_builder.build_memory_context(memories, query=query)
+        memory_context = await self._context_builder.build_memory_context(memories, query=query)
         steps.append(RouteStep(
             subsystem="ContextBuilder",
             action="build_memory_context",
@@ -1324,7 +1324,7 @@ class CognitiveRequestRouter:
         hint: str = "",
     ) -> RouterResult:
         memories = await self._retrieve_memories(message, steps)
-        memory_context = self._build_context(memories, steps, query=message)
+        memory_context = await self._build_context(memories, steps, query=message)
         if hint and memory_context:
             memory_context = f"{hint}\n\n{memory_context}"
         elif hint:

@@ -8,6 +8,7 @@ from typing import Any
 from ..schemas.routing import IntentType
 from .conversation_context_filter import QueryType, classify_query
 from .conversation_memory import ConversationMemory
+from .context_relevance_engine import ContextRelevanceEngine
 from .memory_service import MemoryService
 from .system_memory import SystemMemory
 
@@ -30,10 +31,12 @@ class MemoryHierarchyService:
         conversation_memory: ConversationMemory,
         long_term_memory: MemoryService,
         system_memory: SystemMemory,
+        relevance_engine: ContextRelevanceEngine | None = None,
     ) -> None:
         self._conversation = conversation_memory
         self._long_term = long_term_memory
         self._system = system_memory
+        self._relevance = relevance_engine or ContextRelevanceEngine()
         self._last_result: HierarchyResult = HierarchyResult()
 
     async def resolve(
@@ -44,7 +47,7 @@ class MemoryHierarchyService:
         started = perf_counter()
 
         if intent == IntentType.CONVERSATION_QUERY:
-            result = self._use_conversation_only(message)
+            result = await self._use_conversation_only(message)
 
         elif intent == IntentType.SEARCH_MEMORY:
             result = await self._use_long_term_only(message)
@@ -53,9 +56,6 @@ class MemoryHierarchyService:
             result = self._use_system_only(message)
 
         else:
-            # NORMAL_CHAT / UNKNOWN / anything else falls through to a
-            # finer-grained query-type check (math, greeting, programming,
-            # general) since IntentType itself has no such members.
             query_type = classify_query(message)
 
             if query_type in (QueryType.MATH, QueryType.GREETING):
@@ -63,20 +63,25 @@ class MemoryHierarchyService:
 
             elif query_type == QueryType.PROGRAMMING:
                 conv = self._conversation.get_recent(turns=5)
+                conv_filtered = await self._relevance.filter_conversation(message, conv)
                 result = HierarchyResult(
                     memory_layer="conversation",
-                    conversation_messages=conv,
-                    context_text=self._build_conversation_text(conv),
+                    conversation_messages=conv_filtered.relevant,
+                    context_text=self._build_conversation_text(conv_filtered.relevant),
                 )
 
             else:
                 conv = self._conversation.get_recent(turns=10)
-                lt = await self._long_term.search_memory(query=message, top_k=5)
+                lt = await self._long_term.search_memory(query=message, top_k=10)
+
+                conv_filtered = await self._relevance.filter_conversation(message, conv)
+                lt_filtered = await self._relevance.filter_memories(message, lt)
+
                 result = HierarchyResult(
                     memory_layer="conversation+long_term",
-                    conversation_messages=conv,
-                    long_term_memories=lt,
-                    context_text=self._build_combined_text(conv, lt),
+                    conversation_messages=conv_filtered.relevant,
+                    long_term_memories=lt_filtered.relevant,
+                    context_text=self._build_combined_text(conv_filtered.relevant, lt_filtered.relevant),
                 )
 
         result.execution_time_ms = (perf_counter() - started) * 1000
@@ -92,22 +97,24 @@ class MemoryHierarchyService:
         )
         return result
 
-    def _use_conversation_only(self, message: str) -> HierarchyResult:
+    async def _use_conversation_only(self, message: str) -> HierarchyResult:
         messages = self._conversation.search(message)
         if not messages:
             messages = self._conversation.get_recent(turns=10)
+        filtered = await self._relevance.filter_conversation(message, messages)
         return HierarchyResult(
             memory_layer="conversation",
-            conversation_messages=messages,
-            context_text=self._build_conversation_text(messages),
+            conversation_messages=filtered.relevant,
+            context_text=self._build_conversation_text(filtered.relevant),
         )
 
     async def _use_long_term_only(self, message: str) -> HierarchyResult:
         lt = await self._long_term.search_memory(query=message, top_k=10)
+        filtered = await self._relevance.filter_memories(message, lt)
         return HierarchyResult(
             memory_layer="long_term",
-            long_term_memories=lt,
-            context_text=self._build_long_term_text(lt),
+            long_term_memories=filtered.relevant,
+            context_text=self._build_long_term_text(filtered.relevant),
         )
 
     def _use_system_only(self, message: str) -> HierarchyResult:
