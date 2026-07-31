@@ -1,4 +1,4 @@
-# Aetheris
+## Aetheris
 
 A modular AI system foundation with a FastAPI backend and Next.js frontend. Aetheris is designed for persistent memory, cognitive reasoning, context-aware conversation, and structured response generation.
 
